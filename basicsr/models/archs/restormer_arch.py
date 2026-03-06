@@ -74,59 +74,80 @@ class LayerNorm(nn.Module):
 
 
 ##########################################################################
-##########################################################################
-## Dynamic Frequency Feed-Forward Network (DFFN) from FFTFormer
-class DFFN(nn.Module):
+## Dual-Domain Gated Feed-Forward Network (DD-GDFN)
+class DD_GDFN(nn.Module):
+    """
+    Dual-Domain Gated Feed-Forward Network
+    融合 GDFN (空域局部上下文) 和 DFFN (频域滤波)
+    """
+
     def __init__(self, dim, ffn_expansion_factor, bias):
+        super(DD_GDFN, self).__init__()
 
-        super(DFFN, self).__init__()
-
+        # 隐藏层维度
         hidden_features = int(dim * ffn_expansion_factor)
-
         self.patch_size = 8
-
         self.dim = dim
-        self.project_in = nn.Conv2d(dim, hidden_features * 2, kernel_size=1, bias=bias)
 
-        self.dwconv = nn.Conv2d(
-            hidden_features * 2,
-            hidden_features * 2,
+        # 1. 统一进行通道映射扩展。扩展为三份：空域、频域、门控信号
+        self.project_in = nn.Conv2d(dim, hidden_features * 3, kernel_size=1, bias=bias)
+
+        # 2. 空域的 3x3 深度可分离卷积
+        self.dwconv_spatial = nn.Conv2d(
+            hidden_features,
+            hidden_features,
             kernel_size=3,
             stride=1,
             padding=1,
-            groups=hidden_features * 2,
+            groups=hidden_features,
             bias=bias,
         )
 
-        self.fft = nn.Parameter(
+        # 3. 频域滤波权重
+        self.fft_weight = nn.Parameter(
             torch.ones(
-                (hidden_features * 2, 1, 1, self.patch_size, self.patch_size // 2 + 1)
+                (hidden_features, 1, 1, self.patch_size, self.patch_size // 2 + 1)
             )
         )
+
+        # 4. 融合降维
         self.project_out = nn.Conv2d(hidden_features, dim, kernel_size=1, bias=bias)
 
     def forward(self, x):
-        x = self.project_in(x)
+        # 1. 特征升维并按通道切分为三份
+        x_mapped = self.project_in(x)
+        x_spatial, x_freq, x_gate = x_mapped.chunk(3, dim=1)
+
+        # 2. 空间流处理 (Spatial Stream)
+        out_spatial = self.dwconv_spatial(x_spatial)
+
+        # 3. 频率流处理 (Frequency Stream)
         x_patch = rearrange(
-            x,
+            x_freq,
             "b c (h patch1) (w patch2) -> b c h w patch1 patch2",
             patch1=self.patch_size,
             patch2=self.patch_size,
         )
         x_patch_fft = torch.fft.rfft2(x_patch.float())
-        x_patch_fft = x_patch_fft * self.fft
-        x_patch = torch.fft.irfft2(x_patch_fft, s=(self.patch_size, self.patch_size))
-        x = rearrange(
-            x_patch,
+        x_patch_fft = x_patch_fft * self.fft_weight
+        x_patch_ifft = torch.fft.irfft2(
+            x_patch_fft, s=(self.patch_size, self.patch_size)
+        )
+        out_freq = rearrange(
+            x_patch_ifft,
             "b c h w patch1 patch2 -> b c (h patch1) (w patch2)",
             patch1=self.patch_size,
             patch2=self.patch_size,
         )
-        x1, x2 = self.dwconv(x).chunk(2, dim=1)
 
-        x = F.gelu(x1) * x2
-        x = self.project_out(x)
-        return x
+        # 4. 门控融合 (Gated Interaction)
+        # 将空域和频域特征相加，通过 GELU 激活的 x_gate 控制输出
+        x_fused = F.gelu(x_gate) * (out_spatial + out_freq)
+
+        # 5. 降维输出
+        out = self.project_out(x_fused)
+
+        return out
 
 
 ##########################################################################
@@ -190,36 +211,9 @@ class FSAS(nn.Module):
 
 
 ##########################################################################
-## Gated-Dconv Feed-Forward Network (GDFN)
-class FeedForward(nn.Module):
-    def __init__(self, dim, ffn_expansion_factor, bias):
-        super(FeedForward, self).__init__()
-
-        hidden_features = int(dim * ffn_expansion_factor)
-
-        self.project_in = nn.Conv2d(dim, hidden_features * 2, kernel_size=1, bias=bias)
-
-        self.dwconv = nn.Conv2d(
-            hidden_features * 2,
-            hidden_features * 2,
-            kernel_size=3,
-            stride=1,
-            padding=1,
-            groups=hidden_features * 2,
-            bias=bias,
-        )
-
-        self.project_out = nn.Conv2d(hidden_features, dim, kernel_size=1, bias=bias)
-
-    def forward(self, x):
-        x = self.project_in(x)
-        x1, x2 = self.dwconv(x).chunk(2, dim=1)
-        x = F.gelu(x1) * x2
-        x = self.project_out(x)
-        return x
+## 从这里删除没用的 FeedForward (GDFN) 类，因为它已经融合进 DD_GDFN 中
 
 
-##########################################################################
 ## Multi-DConv Head Transposed Self-Attention (MDTA)
 class Attention(nn.Module):
     def __init__(self, dim, num_heads, bias):
@@ -285,13 +279,8 @@ class TransformerBlock(nn.Module):
 
         self.weight_attn = nn.Parameter(torch.ones(2))
 
-        self.norm_spatial_ffn = LayerNorm(dim, LayerNorm_type)
-        self.norm_freq_ffn = LayerNorm(dim, LayerNorm_type)
-
-        self.ffn_spatial = FeedForward(dim, ffn_expansion_factor, bias)
-        self.ffn_freq = DFFN(dim, ffn_expansion_factor, bias)
-
-        self.weight_ffn = nn.Parameter(torch.ones(2))
+        self.norm_ffn = LayerNorm(dim, LayerNorm_type)
+        self.ffn = DD_GDFN(dim, ffn_expansion_factor, bias)
 
     def forward(self, x):
         w_attn = F.softmax(self.weight_attn, dim=0)
@@ -299,10 +288,7 @@ class TransformerBlock(nn.Module):
         out_freq_attn = self.attn_freq(self.norm_freq_attn(x))
         x = x + w_attn[0] * out_spatial_attn + w_attn[1] * out_freq_attn
 
-        w_ffn = F.softmax(self.weight_ffn, dim=0)
-        out_spatial_ffn = self.ffn_spatial(self.norm_spatial_ffn(x))
-        out_freq_ffn = self.ffn_freq(self.norm_freq_ffn(x))
-        x = x + w_ffn[0] * out_spatial_ffn + w_ffn[1] * out_freq_ffn
+        x = x + self.ffn(self.norm_ffn(x))
 
         return x
 
