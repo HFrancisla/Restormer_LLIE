@@ -42,7 +42,7 @@ parser.add_argument(
 parser.add_argument(
     "--opt",
     type=str,
-    default="LLIM/Options/LowLight_Restormer.yml",
+    default="LLIE/Options/LowLight_Restormer_FFT_128_2_60k_1.yml",
     help="Path to option YAML file.",
 )
 
@@ -70,9 +70,9 @@ print("===>Testing using weights: ", args.weights)
 model_restoration.cuda()
 model_restoration = nn.DataParallel(model_restoration)
 model_restoration.eval()
-
-
-factor = 8
+# Automatically get the padding factor from the yaml configuration's val window_size
+window_size = x.get("val", {}).get("window_size", 8)
+factor = window_size
 result_dir = args.result_dir
 os.makedirs(result_dir, exist_ok=True)
 
@@ -106,7 +106,7 @@ with torch.no_grad():
         restored = model_restoration(input_)
         torch.cuda.synchronize()  # Wait for GPU to finish
         end_time = time.time()
-        
+
         # Record inference time
         inference_time = end_time - start_time
         total_inference_time += inference_time
@@ -134,13 +134,15 @@ with torch.no_grad():
         )
 
 # Display timing statistics
-print("\n" + "="*60)
+print("\n" + "=" * 60)
 print("INFERENCE TIMING STATISTICS")
-print("="*60)
+print("=" * 60)
 print(f"Total images processed: {image_count}")
-print(f"Total inference time: {total_inference_time:.4f} seconds ({total_inference_time/60:.2f} minutes)")
+print(
+    f"Total inference time: {total_inference_time:.4f} seconds ({total_inference_time / 60:.2f} minutes)"
+)
 if image_count > 0:
     avg_time = total_inference_time / image_count
-    print(f"Average time per image: {avg_time:.4f} seconds ({avg_time*1000:.2f} ms)")
-    print(f"Processing speed: {1/avg_time:.2f} images/second")
-print("="*60)
+    print(f"Average time per image: {avg_time:.4f} seconds ({avg_time * 1000:.2f} ms)")
+    print(f"Processing speed: {1 / avg_time:.2f} images/second")
+print("=" * 60)
