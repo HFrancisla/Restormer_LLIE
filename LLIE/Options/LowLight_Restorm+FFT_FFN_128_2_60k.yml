@@ -1,5 +1,5 @@
 # general settings
-name: LowLight_Restorm+FFT_FFN_128_2_60k
+name: LowLight_Restorm+FFT_FFN_128_60k
 model_type: ImageCleanModel
 scale: 1
 num_gpu: 1 # set num_gpu: 0 for cpu mode
@@ -95,6 +95,11 @@ train:
   pixel_opt:
     type: L1Loss
     loss_weight: 1
+    reduction: mean
+
+  fft_loss_opt:
+    type: FFTLoss
+    loss_weight: 0.1
     reduction: mean
 
 # validation settings

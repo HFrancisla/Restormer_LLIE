@@ -6,7 +6,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pdb import set_trace as stx
 import numbers
 
 from einops import rearrange
@@ -81,70 +80,84 @@ class DD_GDFN(nn.Module):
     融合 GDFN (空域局部上下文) 和 DFFN (频域滤波)
     """
 
-    def __init__(self, dim, ffn_expansion_factor, bias):
+    def __init__(
+        self, dim, ffn_expansion_factor, bias, use_spatial=True, use_freq=True
+    ):
         super(DD_GDFN, self).__init__()
-
-        # 隐藏层维度
-        hidden_features = int(dim * ffn_expansion_factor)
+        self.use_spatial = use_spatial
+        self.use_freq = use_freq
         self.patch_size = 8
         self.dim = dim
 
-        # 1. 统一进行通道映射扩展。扩展为三份：空域、频域、门控信号
-        self.project_in = nn.Conv2d(dim, hidden_features * 3, kernel_size=1, bias=bias)
+        # 隐藏层维度
+        hidden_features = int(dim * ffn_expansion_factor)
 
-        # 2. 空域的 3x3 深度可分离卷积
-        self.dwconv_spatial = nn.Conv2d(
-            hidden_features,
-            hidden_features,
-            kernel_size=3,
-            stride=1,
-            padding=1,
-            groups=hidden_features,
-            bias=bias,
+        # 动态计算膨胀倍数：门控(1) + 空间(1，如果开) + 频域(1，如果开)
+        multiplier = 1 + int(self.use_spatial) + int(self.use_freq)
+        self.project_in = nn.Conv2d(
+            dim, hidden_features * multiplier, kernel_size=1, bias=bias
         )
 
-        # 3. 频域滤波权重
-        self.fft_weight = nn.Parameter(
-            torch.ones(
-                (hidden_features, 1, 1, self.patch_size, self.patch_size // 2 + 1)
+        if self.use_spatial:
+            self.dwconv_spatial = nn.Conv2d(
+                hidden_features,
+                hidden_features,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                groups=hidden_features,
+                bias=bias,
             )
-        )
 
-        # 4. 融合降维
+        if self.use_freq:
+            self.fft_weight = nn.Parameter(
+                torch.ones(
+                    (hidden_features, 1, 1, self.patch_size, self.patch_size // 2 + 1)
+                )
+            )
+
         self.project_out = nn.Conv2d(hidden_features, dim, kernel_size=1, bias=bias)
 
     def forward(self, x):
-        # 1. 特征升维并按通道切分为三份
-        x_mapped = self.project_in(x)
-        x_spatial, x_freq, x_gate = x_mapped.chunk(3, dim=1)
+        x = self.project_in(x)
+        features = x.chunk(1 + int(self.use_spatial) + int(self.use_freq), dim=1)
 
-        # 2. 空间流处理 (Spatial Stream)
-        out_spatial = self.dwconv_spatial(x_spatial)
+        gate = features[0]
+        idx = 1
 
-        # 3. 频率流处理 (Frequency Stream)
-        x_patch = rearrange(
-            x_freq,
-            "b c (h patch1) (w patch2) -> b c h w patch1 patch2",
-            patch1=self.patch_size,
-            patch2=self.patch_size,
-        )
-        x_patch_fft = torch.fft.rfft2(x_patch.float())
-        x_patch_fft = x_patch_fft * self.fft_weight
-        x_patch_ifft = torch.fft.irfft2(
-            x_patch_fft, s=(self.patch_size, self.patch_size)
-        )
-        out_freq = rearrange(
-            x_patch_ifft,
-            "b c h w patch1 patch2 -> b c (h patch1) (w patch2)",
-            patch1=self.patch_size,
-            patch2=self.patch_size,
-        )
+        out_fused = 0
+        if self.use_spatial:
+            x_spatial = self.dwconv_spatial(features[idx])
+            out_fused = out_fused + x_spatial
+            idx += 1
 
-        # 4. 门控融合 (Gated Interaction)
-        # 将空域和频域特征相加，通过 GELU 激活的 x_gate 控制输出
-        x_fused = F.gelu(x_gate) * (out_spatial + out_freq)
+        if self.use_freq:
+            x_freq = features[idx]
+            x_freq_patch = rearrange(
+                x_freq,
+                "b c (h patch1) (w patch2) -> b c h w patch1 patch2",
+                patch1=self.patch_size,
+                patch2=self.patch_size,
+            )
+            x_freq_fft = torch.fft.rfft2(x_freq_patch.float())
+            x_freq_fft = x_freq_fft * self.fft_weight
+            x_patch_ifft = torch.fft.irfft2(
+                x_freq_fft, s=(self.patch_size, self.patch_size)
+            )
+            out_freq = rearrange(
+                x_patch_ifft,
+                "b c h w patch1 patch2 -> b c (h patch1) (w patch2)",
+                patch1=self.patch_size,
+                patch2=self.patch_size,
+            )
+            out_fused = out_fused + out_freq
+            idx += 1
 
-        # 5. 降维输出
+        if type(out_fused) is int and out_fused == 0:
+            out_fused = 1  # Fallback if both are disabled (should not happen)
+
+        x_fused = F.gelu(gate) * out_fused
+
         out = self.project_out(x_fused)
 
         return out
@@ -268,25 +281,50 @@ class TransformerBlock(nn.Module):
         ffn_expansion_factor,
         bias,
         LayerNorm_type,
+        use_spatial_attn=True,
+        use_freq_attn=True,
+        use_spatial_ffn=True,
+        use_freq_ffn=True,
     ):
         super(TransformerBlock, self).__init__()
 
-        self.norm_spatial_attn = LayerNorm(dim, LayerNorm_type)
-        self.norm_freq_attn = LayerNorm(dim, LayerNorm_type)
+        self.use_spatial_attn = use_spatial_attn
+        self.use_freq_attn = use_freq_attn
 
-        self.attn_spatial = Attention(dim, num_heads, bias)
-        self.attn_freq = FSAS(dim, bias)
+        if self.use_spatial_attn:
+            self.norm_spatial_attn = LayerNorm(dim, LayerNorm_type)
+            self.attn_spatial = Attention(dim, num_heads, bias)
 
-        self.weight_attn = nn.Parameter(torch.ones(2))
+        if self.use_freq_attn:
+            self.norm_freq_attn = LayerNorm(dim, LayerNorm_type)
+            self.attn_freq = FSAS(dim, bias)
+
+        if self.use_spatial_attn and self.use_freq_attn:
+            self.weight_attn = nn.Parameter(torch.ones(2))
 
         self.norm_ffn = LayerNorm(dim, LayerNorm_type)
-        self.ffn = DD_GDFN(dim, ffn_expansion_factor, bias)
+        self.ffn = DD_GDFN(
+            dim,
+            ffn_expansion_factor,
+            bias,
+            use_spatial=use_spatial_ffn,
+            use_freq=use_freq_ffn,
+        )
 
     def forward(self, x):
-        w_attn = F.softmax(self.weight_attn, dim=0)
-        out_spatial_attn = self.attn_spatial(self.norm_spatial_attn(x))
-        out_freq_attn = self.attn_freq(self.norm_freq_attn(x))
-        x = x + w_attn[0] * out_spatial_attn + w_attn[1] * out_freq_attn
+        attn_out = 0
+
+        if self.use_spatial_attn and self.use_freq_attn:
+            w_attn = F.softmax(self.weight_attn, dim=0)
+            out_spatial_attn = self.attn_spatial(self.norm_spatial_attn(x))
+            out_freq_attn = self.attn_freq(self.norm_freq_attn(x))
+            attn_out = w_attn[0] * out_spatial_attn + w_attn[1] * out_freq_attn
+        elif self.use_spatial_attn:
+            attn_out = self.attn_spatial(self.norm_spatial_attn(x))
+        elif self.use_freq_attn:
+            attn_out = self.attn_freq(self.norm_freq_attn(x))
+
+        x = x + attn_out
 
         x = x + self.ffn(self.norm_ffn(x))
 
@@ -369,6 +407,10 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
+                    use_spatial_attn=True,
+                    use_freq_attn=False,
+                    use_spatial_ffn=True,
+                    use_freq_ffn=False,
                 )
                 for i in range(num_blocks[0])
             ]
@@ -383,6 +425,10 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
+                    use_spatial_attn=True,
+                    use_freq_attn=False,
+                    use_spatial_ffn=True,
+                    use_freq_ffn=False,
                 )
                 for i in range(num_blocks[1])
             ]
@@ -397,6 +443,10 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
+                    use_spatial_attn=True,
+                    use_freq_attn=False,
+                    use_spatial_ffn=True,
+                    use_freq_ffn=True,
                 )
                 for i in range(num_blocks[2])
             ]
@@ -411,6 +461,10 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
+                    use_spatial_attn=True,
+                    use_freq_attn=False,
+                    use_spatial_ffn=True,
+                    use_freq_ffn=True,
                 )
                 for i in range(num_blocks[3])
             ]
@@ -428,6 +482,10 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
+                    use_spatial_attn=True,
+                    use_freq_attn=True,
+                    use_spatial_ffn=True,
+                    use_freq_ffn=True,
                 )
                 for i in range(num_blocks[2])
             ]
@@ -445,6 +503,10 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
+                    use_spatial_attn=True,
+                    use_freq_attn=True,
+                    use_spatial_ffn=True,
+                    use_freq_ffn=True,
                 )
                 for i in range(num_blocks[1])
             ]
@@ -462,6 +524,10 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
+                    use_spatial_attn=True,
+                    use_freq_attn=True,
+                    use_spatial_ffn=True,
+                    use_freq_ffn=True,
                 )
                 for i in range(num_blocks[0])
             ]
@@ -475,6 +541,10 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
+                    use_spatial_attn=True,
+                    use_freq_attn=True,
+                    use_spatial_ffn=True,
+                    use_freq_ffn=True,
                 )
                 for i in range(num_refinement_blocks)
             ]
