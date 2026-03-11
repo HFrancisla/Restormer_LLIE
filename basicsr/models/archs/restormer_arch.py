@@ -170,14 +170,14 @@ class TransformerBlock(nn.Module):
             self.attn = HTA(dim, num_heads, bias)
         elif attn_type == "WTA":
             self.attn = WTA(dim, num_heads, bias)
-        elif (
-            attn_type == "IRS"
-        ):  # Intra-Row Self-Attention, which is vertical attention
-            self.attn = IRS(dim, num_heads, bias)
-        elif (
-            attn_type == "ICS"
-        ):  # Intra-Column Self-Attention, which is horizontal attention
-            self.attn = ICS(dim, num_heads, bias)
+        # elif (
+        #     attn_type == "IRS"
+        # ):  # Intra-Row Self-Attention, which is vertical attention
+        #     self.attn = IRS(dim, num_heads, bias)
+        # elif (
+        #     attn_type == "ICS"
+        # ):  # Intra-Column Self-Attention, which is horizontal attention
+        #     self.attn = ICS(dim, num_heads, bias)
         self.norm2 = LayerNorm(dim, LayerNorm_type)
         self.ffn = FeedForward(dim, ffn_expansion_factor, bias)
 
