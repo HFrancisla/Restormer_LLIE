@@ -1,14 +1,14 @@
 # general settings
-name: LowLight_Restormer_128_2_TA
+name: Restormer_LOLv2_10k
 model_type: ImageCleanModel
 scale: 1
-num_gpu: 1 # set num_gpu: 0 for cpu mode
+num_gpu: 1 # 假设你使用单卡进行实验
 manual_seed: 42
 
 # dataset and data loader settings
 datasets:
   train:
-    name: TrainSet
+    name: TrainSet_LOLv2
     type: Dataset_PairedImage
     dataroot_gt: ./datasets/LOL-v2/Real_captured/Train/Normal
     dataroot_lq: ./datasets/LOL-v2/Real_captured/Train/Low
@@ -20,28 +20,28 @@ datasets:
 
     # data loader
     use_shuffle: true
-    num_worker_per_gpu: 1
-    batch_size_per_gpu: 2
+    num_worker_per_gpu: 8
 
-    ### ------- Training on single fixed-patch size 128x128---------
-    mini_batch_sizes: [2]
-    iters: [300000]
-    gt_size: 128
-    gt_sizes: [128]
+    ### -------------Progressive training (渐进式学习)--------------------------
+    # 针对 100k 总迭代次数按比例缩减了每个阶段的步数，总计 100,000 步
+    mini_batch_sizes: [8, 5, 4, 2, 1, 1]
+    iters: [30000, 22000, 16000, 12000, 12000, 8000]
+    gt_size: 384
+    gt_sizes: [128, 160, 192, 256, 320, 384]
     ### ------------------------------------------------------------
 
     dataset_enlarge_ratio: 1
     prefetch_mode: ~
 
   val:
-    name: ValSet
+    name: ValSet_LOLv2
     type: Dataset_PairedImage
     dataroot_gt: ./datasets/LOL-v2/Real_captured/Test/Normal
     dataroot_lq: ./datasets/LOL-v2/Real_captured/Test/Low
     io_backend:
       type: disk
 
-# network structures
+# network structures (保持原始宏大架构不变，建立纯正 Baseline)
 network_g:
   type: Restormer
   inp_channels: 3
@@ -57,33 +57,32 @@ network_g:
 
 # path
 path:
-  pretrain_network_g: ~
+  pretrain_network_g: ~ # 留空，强制从头训练 (From Scratch)
   strict_load_g: true
   resume_state: ~
 
 # training settings
 train:
-  total_iter: 300000
+  total_iter: 100000 # 匹配渐进式学习的总步数 (小数据集不需要 30 万步)
   warmup_iter: -1 # no warm up
   use_grad_clip: true
 
-  # Split 300k iterations into two cycles.
-  # 1st cycle: fixed 3e-4 LR for 92k iters.
-  # 2nd cycle: cosine annealing (3e-4 to 1e-6) for 208k iters.
+  # 学习率调度器也必须匹配 10 万步：前 30k 稳定，后 70k 余弦退火
   scheduler:
     type: CosineAnnealingRestartCyclicLR
-    periods: [92000, 208000]
+    periods: [30000, 70000]
     restart_weights: [1, 1]
     eta_mins: [0.0003, 0.000001]
 
+  # 核心防过拟合策略：在小数据集上从头训练大模型，必须开启 Mixup！
   mixing_augs:
-    mixup: false
+    mixup: true # 从 false 改为 true
     mixup_beta: 1.2
     use_identity: true
 
   optim_g:
     type: AdamW
-    lr: !!float 3e-4
+    lr: !!float 3e-4 # 保持官方的 3e-4 初始学习率
     weight_decay: !!float 1e-4
     betas: [0.9, 0.999]
 
@@ -96,27 +95,22 @@ train:
 # validation settings
 val:
   window_size: 8
-  val_freq: !!float 4e3
+  val_freq: !!float 2e3 # 提高验证频率：每 2000 步验证一次，防止错过最佳指标点
   save_img: false
   rgb2bgr: true
   use_image: true
   max_minibatch: 8
 
   metrics:
-    psnr: # metric name, can be arbitrary
+    psnr:
       type: calculate_psnr
       crop_border: 0
-      test_y_channel: false  # 与 metrics_cal.py 保持一致，在RGB空间计算
-
-  early_stopping:
-    enabled: false # 是否启用早停
-    patience: 20 # 容忍验证指标不提升的次数 (20 * val_freq = 80k 次迭代)
-    monitor: psnr # 监控的指标 (对应 logger 中打印的指标名称)
+      test_y_channel: false
 
 # logging settings
 logger:
-  print_freq: 1000
-  save_checkpoint_freq: !!float 4e3
+  print_freq: 500 # 步数缩短了，打印频率提高一点，方便监控
+  save_checkpoint_freq: !!float 2e3 # 保持与 val_freq 一致
   use_tb_logger: true
   wandb:
     project: ~

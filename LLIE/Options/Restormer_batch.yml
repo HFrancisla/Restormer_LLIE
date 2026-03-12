@@ -1,0 +1,103 @@
+# --------------------------------------------------------------------------
+# Restormer 显存压力与梯度累积效率测试配置 (针对 RTX 4090 24GB)
+# 目标：验证开启梯度检查点后，在各阶段使用更大物理 Batch Size 的稳定性
+# --------------------------------------------------------------------------
+
+name: Restormer_MemTest_4090
+model_type: ImageCleanModel
+scale: 1
+num_gpu: 1
+manual_seed: 42
+
+datasets:
+  train:
+    name: TrainSet_LOLv2
+    type: Dataset_PairedImage
+    dataroot_gt: ./datasets/LOL-v2/Real_captured/Train/Normal
+    dataroot_lq: ./datasets/LOL-v2/Real_captured/Train/Low
+    geometric_augs: true
+    filename_tmpl: "{}"
+    io_backend:
+      type: disk
+
+    # 数据读取
+    use_shuffle: true
+    num_worker_per_gpu: 4 # 测试时可以设小一点，减少干扰
+    batch_size_per_gpu: 16 # 必须与 mini_batch_sizes 的第一个值一致
+
+    # --- 高效率阶段性能测试方案 ---
+    # 物理 Batch 显著增大，累计步数显著减少
+    mini_batch_sizes: [16, 12, 8, 4, 4, 2] # 物理 Batch (针对 24GB 优化)
+    mini_accumulation_steps: [4, 4, 4, 4, 2, 4] # 对应总 Batch: [64, 48, 32, 16, 8, 8]
+
+    # 快速跳转测试：每个阶段只跑 20 步，总共 120 步即可测试完所有分辨率
+    iters: [20, 20, 20, 20, 20, 20]
+    gt_size: 384
+    gt_sizes: [128, 160, 192, 256, 320, 384]
+
+    dataset_enlarge_ratio: 1
+    prefetch_mode: ~
+
+  val: # 验证集保持默认
+    name: ValSet_LOLv2
+    type: Dataset_PairedImage
+    dataroot_gt: ./datasets/LOL-v2/Real_captured/Test/Normal
+    dataroot_lq: ./datasets/LOL-v2/Real_captured/Test/Low
+    io_backend:
+      type: disk
+
+network_g:
+  type: Restormer
+  inp_channels: 3
+  out_channels: 3
+  dim: 48
+  num_blocks: [4, 6, 6, 8]
+  num_refinement_blocks: 4
+  heads: [1, 2, 4, 8]
+  ffn_expansion_factor: 2.66
+  bias: False
+  LayerNorm_type: WithBias
+  use_checkpoint: True # <--- 核心：开启梯度检查点
+
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+
+train:
+  total_iter: 120
+  warmup_iter: -1
+  use_grad_clip: true
+
+  # 只要定义了 mini_accumulation_steps，代码会自动在阶段转换时更新
+  accumulation_steps: 4
+
+  optim_g:
+    type: AdamW
+    lr: !!float 3e-4
+    weight_decay: !!float 1e-4
+    betas: [0.9, 0.999]
+
+  scheduler:
+    type: CosineAnnealingRestartCyclicLR
+    periods: [120]
+    restart_weights: [1]
+    eta_mins: [0.0003]
+
+  pixel_opt:
+    type: L1Loss
+    loss_weight: 1
+    reduction: mean
+
+val:
+  window_size: 8
+  val_freq: 100 # 测试期间减少验证干扰
+  save_img: false
+  metrics:
+    psnr:
+      type: calculate_psnr
+
+logger:
+  print_freq: 1 # 每一步都打印，方便观察 Accum_Steps 的更新
+  save_checkpoint_freq: 1000
+  use_tb_logger: false

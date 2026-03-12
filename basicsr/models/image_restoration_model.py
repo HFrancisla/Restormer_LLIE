@@ -147,7 +147,11 @@ class ImageCleanModel(BaseModel):
             self.gt = data['gt'].to(self.device)
 
     def optimize_parameters(self, current_iter):
-        self.optimizer_g.zero_grad()
+        accumulation_steps = self.opt['train'].get('accumulation_steps', 1)
+        
+        if (current_iter - 1) % accumulation_steps == 0:
+            self.optimizer_g.zero_grad()
+
         preds = self.net_g(self.lq)
         if not isinstance(preds, list):
             preds = [preds]
@@ -162,10 +166,14 @@ class ImageCleanModel(BaseModel):
 
         loss_dict['l_pix'] = l_pix
 
-        l_pix.backward()
-        if self.opt['train']['use_grad_clip']:
-            torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 0.01)
-        self.optimizer_g.step()
+        # Average loss over accumulation steps for backward
+        l_pix_scaled = l_pix / accumulation_steps
+        l_pix_scaled.backward()
+        
+        if current_iter % accumulation_steps == 0:
+            if self.opt['train']['use_grad_clip']:
+                torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 0.01)
+            self.optimizer_g.step()
 
         self.log_dict = self.reduce_loss_dict(loss_dict)
 
