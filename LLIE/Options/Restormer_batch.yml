@@ -26,9 +26,12 @@ datasets:
     batch_size_per_gpu: 16 # 必须与 mini_batch_sizes 的第一个值一致
 
     # --- 高效率阶段性能测试方案 ---
-    # 物理 Batch 显著增大，累计步数显著减少
-    mini_batch_sizes: [16, 12, 8, 4, 4, 2] # 物理 Batch (针对 24GB 优化)
-    mini_accumulation_steps: [4, 4, 4, 4, 2, 4] # 对应总 Batch: [64, 48, 32, 16, 8, 8]
+    # --- 极限性能优化建议 (针对 24GB 开启检查点) ---
+    mini_batch_sizes: [32, 20, 16, 8, 8, 4]
+
+    # 累计步数 (维持总 Batch Size 恒定)
+    # 计算：[64, 40, 32, 16, 8, 8]
+    mini_accumulation_steps: [2, 2, 2, 2, 1, 2]
 
     # 快速跳转测试：每个阶段只跑 20 步，总共 120 步即可测试完所有分辨率
     iters: [20, 20, 20, 20, 20, 20]
@@ -69,6 +72,12 @@ train:
   warmup_iter: -1
   use_grad_clip: true
 
+  # 补全缺失配置
+  mixing_augs:
+    mixup: false
+    mixup_beta: 1.2
+    use_identity: true
+
   # 只要定义了 mini_accumulation_steps，代码会自动在阶段转换时更新
   accumulation_steps: 4
 
@@ -93,11 +102,23 @@ val:
   window_size: 8
   val_freq: 100 # 测试期间减少验证干扰
   save_img: false
+  rgb2bgr: true
+  use_image: true
   metrics:
     psnr:
       type: calculate_psnr
+      crop_border: 0 # 补全缺失的 PSNR 参数
+      test_y_channel: false # 补全缺失的 PSNR 参数
 
 logger:
   print_freq: 1 # 每一步都打印，方便观察 Accum_Steps 的更新
   save_checkpoint_freq: 1000
   use_tb_logger: false
+  wandb:
+    project: ~
+    resume_id: ~
+
+# 分布式设置
+dist_params:
+  backend: nccl
+  port: 29500

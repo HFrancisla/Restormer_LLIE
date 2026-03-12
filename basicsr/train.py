@@ -279,38 +279,39 @@ def main():
             # Only increment effective current_iter after a weight update
             if total_fetches % acc_steps == 0:
                 current_iter += 1
+
+                iter_time = time.time() - iter_time
+                # log
+                if current_iter % opt['logger']['print_freq'] == 0:
+                    log_vars = {'epoch': epoch, 'iter': current_iter}
+                    log_vars.update({'lrs': model.get_current_learning_rate()})
+                    log_vars.update({'time': iter_time, 'data_time': data_time})
+                    log_vars.update(model.get_current_log())
+                    msg_logger(log_vars)
+
+                # save models and training states
+                if current_iter % opt['logger']['save_checkpoint_freq'] == 0:
+                    logger.info('Saving models and training states.')
+                    model.save(epoch, current_iter)
+
+                # validation
+                if opt.get('val') is not None and (current_iter %
+                                                   opt['val']['val_freq'] == 0):
+                    rgb2bgr = opt['val'].get('rgb2bgr', True)
+                    # wheather use uint8 image to compute metrics
+                    use_image = opt['val'].get('use_image', True)
+                    should_stop = model.validation(val_loader, current_iter, tb_logger,
+                                     opt['val']['save_img'], rgb2bgr, use_image )
+                    if should_stop:
+                        logger.info('Early stopping triggered. Terminating training.')
+                        break
+
                 if current_iter > total_iters:
                     break
                 
                 # Update learning rate based on weight updates
                 model.update_learning_rate(
                     current_iter, warmup_iter=opt['train'].get('warmup_iter', -1))
-
-            iter_time = time.time() - iter_time
-            # log
-            if current_iter % opt['logger']['print_freq'] == 0:
-                log_vars = {'epoch': epoch, 'iter': current_iter}
-                log_vars.update({'lrs': model.get_current_learning_rate()})
-                log_vars.update({'time': iter_time, 'data_time': data_time})
-                log_vars.update(model.get_current_log())
-                msg_logger(log_vars)
-
-            # save models and training states
-            if current_iter % opt['logger']['save_checkpoint_freq'] == 0:
-                logger.info('Saving models and training states.')
-                model.save(epoch, current_iter)
-
-            # validation
-            if opt.get('val') is not None and (current_iter %
-                                               opt['val']['val_freq'] == 0):
-                rgb2bgr = opt['val'].get('rgb2bgr', True)
-                # wheather use uint8 image to compute metrics
-                use_image = opt['val'].get('use_image', True)
-                should_stop = model.validation(val_loader, current_iter, tb_logger,
-                                 opt['val']['save_img'], rgb2bgr, use_image )
-                if should_stop:
-                    logger.info('Early stopping triggered. Terminating training.')
-                    break
 
             data_time = time.time()
             iter_time = time.time()
