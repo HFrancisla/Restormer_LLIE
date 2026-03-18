@@ -88,7 +88,7 @@ train:
     eta_mins: [0.0003, 0.000001]
 
   mixing_augs:
-    mixup: true
+    mixup: false
     mixup_beta: 1.2
     use_identity: true
 
