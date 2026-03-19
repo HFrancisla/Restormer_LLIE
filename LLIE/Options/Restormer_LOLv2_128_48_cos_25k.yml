@@ -1,5 +1,5 @@
 # general settings
-name: Restormer_LOLv2_128_32_cos_25k
+name: Restormer_LOLv2_128_48_cos_25k
 model_type: ImageCleanModel
 scale: 1
 num_gpu: 1
@@ -20,19 +20,22 @@ datasets:
 
     # data loader
     use_shuffle: true
-    num_worker_per_gpu: 8
-    batch_size_per_gpu: 32
+    num_worker_per_gpu: 12
+    batch_size_per_gpu: 48
 
     ### ------- Training on fixed-patch size 128x128 for Comparison ---------
     # 固定 128 Patch 确保对比一致性
     iters: [25000]
-    mini_batch_sizes: [32]
+    mini_batch_sizes: [48]
     gt_size: 128
     gt_sizes: [128]
     ### ---------------------------------------------------------------------
 
     dataset_enlarge_ratio: 1
     prefetch_mode: ~
+    pin_memory: true
+    prefetch_factor: 2
+    persistent_workers: true
 
   val:
     name: ValSet_LOLv2
@@ -104,7 +107,7 @@ val:
   save_img: false
   rgb2bgr: true
   use_image: true
-  max_minibatch: 8
+  max_minibatch: 16
 
   metrics:
     psnr:
@@ -114,7 +117,7 @@ val:
 
 # logging settings
 logger:
-  print_freq: 200
+  print_freq: 500
   save_checkpoint_freq: !!float 1e3
   use_tb_logger: true
   wandb:
