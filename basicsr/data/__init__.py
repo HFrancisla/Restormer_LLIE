@@ -104,8 +104,9 @@ def create_dataloader(dataset,
                          "Supported ones are 'train', 'val' and 'test'.")
 
     dataloader_args['pin_memory'] = dataset_opt.get('pin_memory', False)
-    dataloader_args['persistent_workers'] = dataset_opt.get('persistent_workers', False)
-    dataloader_args['prefetch_factor'] = dataset_opt.get('prefetch_factor', 2)
+    if dataloader_args.get('num_workers', 0) > 0:
+        dataloader_args['persistent_workers'] = dataset_opt.get('persistent_workers', False)
+        dataloader_args['prefetch_factor'] = dataset_opt.get('prefetch_factor', 2)
 
     prefetch_mode = dataset_opt.get('prefetch_mode')
     if prefetch_mode == 'cpu':  # CPUPrefetcher
