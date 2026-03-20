@@ -139,7 +139,7 @@ def main():
     import os
     try:
         states = os.listdir(state_folder_path)
-    except:
+    except Exception:
         states = []
 
     resume_state = None
@@ -236,7 +236,7 @@ def main():
             
             ### ------Progressive learning ---------------------
             # Use current_iter (effective updates) to decide stage
-            j = ((current_iter>groups) !=True).nonzero()[0]
+            j = (current_iter <= groups).nonzero()[0]
             if len(j) == 0:
                 bs_j = len(groups) - 1
             else:
@@ -287,6 +287,8 @@ def main():
                     log_vars.update({'lrs': model.get_current_learning_rate()})
                     log_vars.update({'time': iter_time, 'data_time': data_time})
                     log_vars.update(model.get_current_log())
+                    if torch.cuda.is_available():
+                        log_vars['max_mem'] = torch.cuda.max_memory_allocated() / (1024 * 1024)
                     msg_logger(log_vars)
 
                 # save models and training states
