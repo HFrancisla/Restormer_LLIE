@@ -288,7 +288,8 @@ def main():
                     log_vars.update({'time': iter_time, 'data_time': data_time})
                     log_vars.update(model.get_current_log())
                     if torch.cuda.is_available():
-                        log_vars['max_mem'] = torch.cuda.max_memory_allocated() / (1024 * 1024)
+                        log_vars['max_mem'] = torch.cuda.max_memory_allocated() / (1024 * 1024 * 1024)
+                        log_vars['max_res'] = torch.cuda.max_memory_reserved() / (1024 * 1024 * 1024)
                     msg_logger(log_vars)
 
                 # save models and training states

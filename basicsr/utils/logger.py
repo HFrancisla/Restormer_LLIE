@@ -67,8 +67,8 @@ class MessageLogger():
 
         # other items, especially losses
         for k, v in log_vars.items():
-            if k == 'max_mem':
-                message += f'{k}: {v:.0f}MB '
+            if k in ['max_mem', 'max_res']:
+                message += f'{k}: {v:.2f}GB '
             else:
                 message += f'{k}: {v:.4e} '
             # tensorboard logger
