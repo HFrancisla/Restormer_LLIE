@@ -26,6 +26,23 @@ def to_4d(x, h, w):
     return rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
 
 
+class RMSNorm(nn.Module):
+    def __init__(self, normalized_shape):
+        super(RMSNorm, self).__init__()
+        if isinstance(normalized_shape, numbers.Integral):
+            normalized_shape = (normalized_shape,)
+        normalized_shape = torch.Size(normalized_shape)
+
+        assert len(normalized_shape) == 1
+
+        self.weight = nn.Parameter(torch.ones(normalized_shape))
+        self.normalized_shape = normalized_shape
+
+    def forward(self, x):
+        sigma = x.pow(2).mean(-1, keepdim=True)
+        return x / torch.sqrt(sigma + 1e-5) * self.weight
+
+
 class BiasFree_LayerNorm(nn.Module):
     def __init__(self, normalized_shape):
         super(BiasFree_LayerNorm, self).__init__()
@@ -67,6 +84,8 @@ class LayerNorm(nn.Module):
         super(LayerNorm, self).__init__()
         if LayerNorm_type == "BiasFree":
             self.body = BiasFree_LayerNorm(dim)
+        elif LayerNorm_type == "RMSNorm":
+            self.body = RMSNorm(dim)
         else:
             self.body = WithBias_LayerNorm(dim)
 
@@ -78,8 +97,9 @@ class LayerNorm(nn.Module):
 ##########################################################################
 ## Gated-Dconv Feed-Forward Network (GDFN)
 class FeedForward(nn.Module):
-    def __init__(self, dim, ffn_expansion_factor, bias):
+    def __init__(self, dim, ffn_expansion_factor, bias, act_type="GELU"):
         super(FeedForward, self).__init__()
+        self.act_type = act_type
 
         hidden_features = int(dim * ffn_expansion_factor)
 
@@ -100,7 +120,12 @@ class FeedForward(nn.Module):
     def forward(self, x):
         x = self.project_in(x)
         x1, x2 = self.dwconv(x).chunk(2, dim=1)
-        x = F.gelu(x1) * x2
+        if self.act_type == "GELU":
+            x = F.gelu(x1) * x2
+        elif self.act_type == "SiLU":
+            x = F.silu(x1) * x2
+        else:
+            raise ValueError(f"Unsupported activation type: {self.act_type}")
         x = self.project_out(x)
         return x
 
@@ -108,19 +133,25 @@ class FeedForward(nn.Module):
 ##########################################################################
 ## Multi-DConv Head Transposed Self-Attention (MDTA)
 class Attention(nn.Module):
-    def __init__(self, dim, num_heads, bias):
+    def __init__(self, dim, num_heads, bias, num_kv_heads=None):
         super(Attention, self).__init__()
         self.num_heads = num_heads
+        self.num_kv_heads = num_heads if num_kv_heads is None else num_kv_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
 
-        self.qkv = nn.Conv2d(dim, dim * 3, kernel_size=1, bias=bias)
+        self.q_dim = dim
+        self.kv_dim = dim * self.num_kv_heads // num_heads
+
+        self.qkv = nn.Conv2d(
+            dim, self.q_dim + self.kv_dim * 2, kernel_size=1, bias=bias
+        )
         self.qkv_dwconv = nn.Conv2d(
-            dim * 3,
-            dim * 3,
+            self.q_dim + self.kv_dim * 2,
+            self.q_dim + self.kv_dim * 2,
             kernel_size=3,
             stride=1,
             padding=1,
-            groups=dim * 3,
+            groups=self.q_dim + self.kv_dim * 2,
             bias=bias,
         )
         self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
@@ -129,11 +160,16 @@ class Attention(nn.Module):
         b, c, h, w = x.shape
 
         qkv = self.qkv_dwconv(self.qkv(x))
-        q, k, v = qkv.chunk(3, dim=1)
+        q, k, v = torch.split(qkv, [self.q_dim, self.kv_dim, self.kv_dim], dim=1)
 
         q = rearrange(q, "b (head c) h w -> b head c (h w)", head=self.num_heads)
-        k = rearrange(k, "b (head c) h w -> b head c (h w)", head=self.num_heads)
-        v = rearrange(v, "b (head c) h w -> b head c (h w)", head=self.num_heads)
+        k = rearrange(k, "b (head c) h w -> b head c (h w)", head=self.num_kv_heads)
+        v = rearrange(v, "b (head c) h w -> b head c (h w)", head=self.num_kv_heads)
+
+        if self.num_heads != self.num_kv_heads:
+            num_repeat = self.num_heads // self.num_kv_heads
+            k = torch.repeat_interleave(k, repeats=num_repeat, dim=1)
+            v = torch.repeat_interleave(v, repeats=num_repeat, dim=1)
 
         q = torch.nn.functional.normalize(q, dim=-1)
         k = torch.nn.functional.normalize(k, dim=-1)
@@ -162,13 +198,15 @@ class TransformerBlock(nn.Module):
         LayerNorm_type,
         attn_type="MDTA",
         use_checkpoint=False,
+        ffn_act_type="GELU",
+        num_kv_heads=None,
     ):
         super(TransformerBlock, self).__init__()
         self.use_checkpoint = use_checkpoint
 
         self.norm1 = LayerNorm(dim, LayerNorm_type)
         if attn_type == "MDTA":
-            self.attn = Attention(dim, num_heads, bias)
+            self.attn = Attention(dim, num_heads, bias, num_kv_heads=num_kv_heads)
         elif attn_type == "HTA":
             self.attn = HTA(dim, num_heads, bias)
         elif attn_type == "WTA":
@@ -182,7 +220,7 @@ class TransformerBlock(nn.Module):
         # ):  # Intra-Column Self-Attention, which is horizontal attention
         #     self.attn = ICS(dim, num_heads, bias)
         self.norm2 = LayerNorm(dim, LayerNorm_type)
-        self.ffn = FeedForward(dim, ffn_expansion_factor, bias)
+        self.ffn = FeedForward(dim, ffn_expansion_factor, bias, act_type=ffn_act_type)
 
     def forward(self, x):
         if self.use_checkpoint and x.requires_grad:
@@ -257,12 +295,17 @@ class Restormer(nn.Module):
         heads=[1, 2, 4, 8],
         ffn_expansion_factor=2.66,
         bias=False,
-        LayerNorm_type="WithBias",  ## Other option 'BiasFree'
+        LayerNorm_type="RMSNorm",  ## Other option 'BiasFree', 'WithBias'
         attn_types=["MDTA", "MDTA", "MDTA", "MDTA"],
         dual_pixel_task=False,  ## True for dual-pixel defocus deblurring only. Also set inp_channels=6
         use_checkpoint=False,
+        ffn_act_type="SiLU",
+        kv_heads=None,
     ):
         super(Restormer, self).__init__()
+
+        if kv_heads is None:
+            kv_heads = heads
 
         self.patch_embed = OverlapPatchEmbed(inp_channels, dim)
 
@@ -276,6 +319,8 @@ class Restormer(nn.Module):
                     LayerNorm_type=LayerNorm_type,
                     attn_type=attn_types[0],
                     use_checkpoint=use_checkpoint,
+                    ffn_act_type=ffn_act_type,
+                    num_kv_heads=kv_heads[0],
                 )
                 for i in range(num_blocks[0])
             ]
@@ -292,6 +337,8 @@ class Restormer(nn.Module):
                     LayerNorm_type=LayerNorm_type,
                     attn_type=attn_types[1],
                     use_checkpoint=use_checkpoint,
+                    ffn_act_type=ffn_act_type,
+                    num_kv_heads=kv_heads[1],
                 )
                 for i in range(num_blocks[1])
             ]
@@ -308,6 +355,8 @@ class Restormer(nn.Module):
                     LayerNorm_type=LayerNorm_type,
                     attn_type=attn_types[2],
                     use_checkpoint=use_checkpoint,
+                    ffn_act_type=ffn_act_type,
+                    num_kv_heads=kv_heads[2],
                 )
                 for i in range(num_blocks[2])
             ]
@@ -324,6 +373,8 @@ class Restormer(nn.Module):
                     LayerNorm_type=LayerNorm_type,
                     attn_type=attn_types[3],
                     use_checkpoint=use_checkpoint,
+                    ffn_act_type=ffn_act_type,
+                    num_kv_heads=kv_heads[3],
                 )
                 for i in range(num_blocks[3])
             ]
@@ -343,6 +394,8 @@ class Restormer(nn.Module):
                     LayerNorm_type=LayerNorm_type,
                     attn_type=attn_types[2],
                     use_checkpoint=use_checkpoint,
+                    ffn_act_type=ffn_act_type,
+                    num_kv_heads=kv_heads[2],
                 )
                 for i in range(num_blocks[2])
             ]
@@ -362,6 +415,8 @@ class Restormer(nn.Module):
                     LayerNorm_type=LayerNorm_type,
                     attn_type=attn_types[1],
                     use_checkpoint=use_checkpoint,
+                    ffn_act_type=ffn_act_type,
+                    num_kv_heads=kv_heads[1],
                 )
                 for i in range(num_blocks[1])
             ]
@@ -381,6 +436,8 @@ class Restormer(nn.Module):
                     LayerNorm_type=LayerNorm_type,
                     attn_type=attn_types[0],
                     use_checkpoint=use_checkpoint,
+                    ffn_act_type=ffn_act_type,
+                    num_kv_heads=kv_heads[0],
                 )
                 for i in range(num_blocks[0])
             ]
@@ -396,6 +453,8 @@ class Restormer(nn.Module):
                     LayerNorm_type=LayerNorm_type,
                     attn_type=attn_types[0],
                     use_checkpoint=use_checkpoint,
+                    ffn_act_type=ffn_act_type,
+                    num_kv_heads=kv_heads[0],
                 )
                 for i in range(num_refinement_blocks)
             ]
