@@ -242,6 +242,8 @@ class ImageCleanModel(BaseModel):
             self.metric_results = {
                 metric: 0 for metric in self.opt["val"]["metrics"].keys()
             }
+            if hasattr(self, 'cri_pix'):
+                self.metric_results["val_loss"] = 0.0
         # pbar = tqdm(total=len(dataloader), unit='image')
 
         window_size = self.opt["val"].get("window_size", 0)
@@ -258,6 +260,11 @@ class ImageCleanModel(BaseModel):
 
             self.feed_data(val_data)
             test()
+
+            if with_metrics and hasattr(self, 'cri_pix') and hasattr(self, 'gt'):
+                with torch.no_grad():
+                    l_pix = self.cri_pix(self.output, self.gt)
+                    self.metric_results["val_loss"] += l_pix.item()
 
             visuals = self.get_current_visuals()
             sr_img = tensor2img([visuals["result"]], rgb2bgr=rgb2bgr)
