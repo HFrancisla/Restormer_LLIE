@@ -13,7 +13,6 @@ import numbers
 from einops import rearrange
 
 
-
 ##########################################################################
 ## Layer Norm
 
@@ -152,6 +151,98 @@ class Attention(nn.Module):
 
 
 ##########################################################################
+## Dual-Branch Spatial & Frequency Attention
+class DualAttention(nn.Module):
+    def __init__(self, dim, num_heads, bias, LayerNorm_type):
+        super(DualAttention, self).__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+
+        # --- 合并生成所有组件 (q_s, k_s, v_s, q_f, k_f) ---
+        self.qkv_all = nn.Conv2d(dim, dim * 5, kernel_size=1, bias=bias)
+        self.qkv_all_dwconv = nn.Conv2d(
+            dim * 5,
+            dim * 5,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            groups=dim * 5,
+            bias=bias,
+        )
+
+        # --- 空间分支投影 ---
+        self.proj_spatial = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+
+        # --- 频率分支的 LayerNorm (FSAS Style) ---
+        self.norm_f = LayerNorm(dim, LayerNorm_type)
+
+        # --- 特征融合投影 ---
+        self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+
+        # ==========================================
+        # 1. 空间域分支交互
+        # ==========================================
+        qkv_all = self.qkv_all_dwconv(self.qkv_all(x))
+        q_s, k_s, v_s, q_f, k_f = qkv_all.chunk(5, dim=1)
+
+        q_s = rearrange(q_s, "b (head c) h w -> b head c (h w)", head=self.num_heads)
+        k_s = rearrange(k_s, "b (head c) h w -> b head c (h w)", head=self.num_heads)
+        v_s = rearrange(v_s, "b (head c) h w -> b head c (h w)", head=self.num_heads)
+
+        q_s = F.normalize(q_s, dim=-1)
+        k_s = F.normalize(k_s, dim=-1)
+
+        attn_s = (q_s @ k_s.transpose(-2, -1)) * self.temperature
+        attn_s = attn_s.softmax(dim=-1)
+
+        out_s = attn_s @ v_s
+        out_s = rearrange(
+            out_s, "b head c (h w) -> b (head c) h w", head=self.num_heads, h=h, w=w
+        )
+        out_s = self.proj_spatial(out_s)
+
+        # ==========================================
+        # 2. 局部 8x8 频率域分支交互
+        # ==========================================
+        patch_size = 8
+
+        # 切块 [b, c, h, w] -> [b, c, h//8, w//8, 8, 8]
+        q_patch = rearrange(
+            q_f, "b c (h p1) (w p2) -> b c h w p1 p2", p1=patch_size, p2=patch_size
+        )
+        k_patch = rearrange(
+            k_f, "b c (h p1) (w p2) -> b c h w p1 p2", p1=patch_size, p2=patch_size
+        )
+
+        q_f_fft = torch.fft.rfft2(q_patch.float())
+        k_f_fft = torch.fft.rfft2(k_patch.float())
+
+        attn_f_fft = q_f_fft * k_f_fft
+        attn_f_patch = torch.fft.irfft2(attn_f_fft, s=(patch_size, patch_size))
+
+        # 还原形状 [b, c, h//8, w//8, 8, 8] -> [b, c, h, w]
+        attn_f = rearrange(
+            attn_f_patch,
+            "b c h w p1 p2 -> b c (h p1) (w p2)",
+            p1=patch_size,
+            p2=patch_size,
+        )
+        # [修改点] 按照 FSAS 逻辑使用 LayerNorm 替换 Softmax
+        attn_f = self.norm_f(attn_f)
+
+        # ==========================================
+        # 3. 融合
+        # ==========================================
+        out = out_s * attn_f
+        out = self.project_out(out)
+
+        return out
+
+
+##########################################################################
 class TransformerBlock(nn.Module):
     def __init__(
         self,
@@ -166,7 +257,7 @@ class TransformerBlock(nn.Module):
         self.use_checkpoint = use_checkpoint
 
         self.norm1 = LayerNorm(dim, LayerNorm_type)
-        self.attn = Attention(dim, num_heads, bias)
+        self.attn = DualAttention(dim, num_heads, bias, LayerNorm_type)
         self.norm2 = LayerNorm(dim, LayerNorm_type)
         self.ffn = FeedForward(dim, ffn_expansion_factor, bias)
 

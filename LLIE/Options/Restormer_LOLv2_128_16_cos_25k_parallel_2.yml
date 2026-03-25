@@ -1,5 +1,5 @@
 # general settings
-name: Restormer_LOLv2_128_16_cos_25k
+name: Restormer_LOLv2_128_16_cos_25k_parallel_2
 model_type: ImageCleanModel
 scale: 1
 num_gpu: 1
