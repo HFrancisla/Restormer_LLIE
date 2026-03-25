@@ -11,7 +11,7 @@ from pdb import set_trace as stx
 import numbers
 
 from einops import rearrange
-from .extra_attention_raw import HTA, WTA
+
 
 
 ##########################################################################
@@ -160,27 +160,13 @@ class TransformerBlock(nn.Module):
         ffn_expansion_factor,
         bias,
         LayerNorm_type,
-        attn_type="MDTA",
         use_checkpoint=False,
     ):
         super(TransformerBlock, self).__init__()
         self.use_checkpoint = use_checkpoint
 
         self.norm1 = LayerNorm(dim, LayerNorm_type)
-        if attn_type == "MDTA":
-            self.attn = Attention(dim, num_heads, bias)
-        elif attn_type == "HTA":
-            self.attn = HTA(dim, num_heads, bias)
-        elif attn_type == "WTA":
-            self.attn = WTA(dim, num_heads, bias)
-        # elif (
-        #     attn_type == "IRS"
-        # ):  # Intra-Row Self-Attention, which is vertical attention
-        #     self.attn = IRS(dim, num_heads, bias)
-        # elif (
-        #     attn_type == "ICS"
-        # ):  # Intra-Column Self-Attention, which is horizontal attention
-        #     self.attn = ICS(dim, num_heads, bias)
+        self.attn = Attention(dim, num_heads, bias)
         self.norm2 = LayerNorm(dim, LayerNorm_type)
         self.ffn = FeedForward(dim, ffn_expansion_factor, bias)
 
@@ -258,7 +244,6 @@ class Restormer(nn.Module):
         ffn_expansion_factor=2.66,
         bias=False,
         LayerNorm_type="WithBias",  ## Other option 'BiasFree'
-        attn_types=["MDTA", "MDTA", "MDTA", "MDTA"],
         dual_pixel_task=False,  ## True for dual-pixel defocus deblurring only. Also set inp_channels=6
         use_checkpoint=False,
     ):
@@ -274,7 +259,6 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
-                    attn_type=attn_types[0],
                     use_checkpoint=use_checkpoint,
                 )
                 for i in range(num_blocks[0])
@@ -290,7 +274,6 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
-                    attn_type=attn_types[1],
                     use_checkpoint=use_checkpoint,
                 )
                 for i in range(num_blocks[1])
@@ -306,7 +289,6 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
-                    attn_type=attn_types[2],
                     use_checkpoint=use_checkpoint,
                 )
                 for i in range(num_blocks[2])
@@ -322,7 +304,6 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
-                    attn_type=attn_types[3],
                     use_checkpoint=use_checkpoint,
                 )
                 for i in range(num_blocks[3])
@@ -341,7 +322,6 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
-                    attn_type=attn_types[2],
                     use_checkpoint=use_checkpoint,
                 )
                 for i in range(num_blocks[2])
@@ -360,7 +340,6 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
-                    attn_type=attn_types[1],
                     use_checkpoint=use_checkpoint,
                 )
                 for i in range(num_blocks[1])
@@ -379,7 +358,6 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
-                    attn_type=attn_types[0],
                     use_checkpoint=use_checkpoint,
                 )
                 for i in range(num_blocks[0])
@@ -394,7 +372,6 @@ class Restormer(nn.Module):
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
                     LayerNorm_type=LayerNorm_type,
-                    attn_type=attn_types[0],
                     use_checkpoint=use_checkpoint,
                 )
                 for i in range(num_refinement_blocks)
