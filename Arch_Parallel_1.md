@@ -81,11 +81,53 @@ class DD_GDFN(nn.Module):
 
 重构 Block 控制流，使得它不再强绑定某种注意力方式，还能控制对加权权重的声明。
 
+**TransformerBlock 数据流转示意图 (四路/双域全开模式)：**
+
+```text
+                              [ Input X ]
+                                  │
+      ┌───────────────────────────┼───────────────────────────┐
+      │                           │                           │
+ [LayerNorm]                 [LayerNorm]                      │
+      │                           │                           │
+[ MDTA Attention ]       [ FSAS Attention ]                   │
+ (局部/通道空域)              (全局特征频域)                    │
+      │                           │                           │
+      └───> w0 * Out        w1 * Out <────┘                   │
+                 │                │                           │
+                 └───────+────────┘                           │
+                         │                                    │ (Skip Connection 1)
+                         + <──────────────────────────────────┘
+                         │
+                 [ Intermediate X' ]
+                         │
+      ┌──────────────────┴──────────────────┐
+      │                                     │
+ [LayerNorm]                                │
+      │                                     │
+[ 1x1 Conv (project_in / 通道扩展) ]        │
+      │                                     │
+      ├──────────────┬──────────────┐       │
+  [ Chunk 0]     [ Chunk 1]     [ Chunk 2]  │
+   (门控层)       (空域支路)     (频域支路)   │
+      │              │              │       │
+  [ GELU ]       [ DWConv ]   [ FFT Filter ]│
+      │              │              │       │
+      │              └──────+───────┘       │
+      │                     │               │
+      └─────────(*)─────────┘               │
+                 │ (门控机制逐元素相乘)     │
+                 │                          │
+[ 1x1 Conv (project_out / 通道降维) ]       │
+      │                                     │
+      + <───────────────────────────────────┘ (Skip Connection 2)
+      │
+  [ Output Y ]
+```
+
 ```python
 class TransformerBlock(nn.Module):
-    def __init__(self, dim, num_heads, ffn_expansion_factor, bias, LayerNorm_type,
-                 use_spatial_attn=True, use_freq_attn=True, 
-                 use_spatial_ffn=True, use_freq_ffn=True):
+    def __init__(self, dim, num_heads, ffn_expansion_factor, bias, LayerNorm_type,use_spatial_attn=True, use_freq_attn=True, use_spatial_ffn=True, use_freq_ffn=True):
         # ...
         if self.use_spatial_attn and self.use_freq_attn:
             self.weight_attn = nn.Parameter(torch.ones(2))      # 当双开时，学习一个融合占比阈值
