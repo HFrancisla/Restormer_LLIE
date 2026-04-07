@@ -72,7 +72,7 @@ train:
   warmup_iter: 1000 # 1k 预热防止大 Batch 初期梯度爆炸
   use_grad_clip: true
 
-  # 禁用梯度累计，确保每步都是物理 Batch 32
+  # 禁用梯度累计
   accumulation_steps: 1
   mini_accumulation_steps: [1]
 
