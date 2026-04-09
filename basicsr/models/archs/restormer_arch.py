@@ -158,15 +158,15 @@ class DualAttention(nn.Module):
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
 
-        # --- 合并生成所有组件 (q_s, k_s, v_s, q_f, k_f) ---
-        self.qkv_all = nn.Conv2d(dim, dim * 5, kernel_size=1, bias=bias)
+        # --- 合并生成所有组件 (X_s, V, X_f) ---
+        self.qkv_all = nn.Conv2d(dim, dim * 3, kernel_size=1, bias=bias)
         self.qkv_all_dwconv = nn.Conv2d(
-            dim * 5,
-            dim * 5,
+            dim * 3,
+            dim * 3,
             kernel_size=3,
             stride=1,
             padding=1,
-            groups=dim * 5,
+            groups=dim * 3,
             bias=bias,
         )
 
@@ -183,19 +183,19 @@ class DualAttention(nn.Module):
         b, c, h, w = x.shape
 
         # ==========================================
-        # 1. 空间域分支交互
+        # 1. 统一投影: X_s, V, X_f
         # ==========================================
         qkv_all = self.qkv_all_dwconv(self.qkv_all(x))
-        q_s, k_s, v_s, q_f, k_f = qkv_all.chunk(5, dim=1)
+        x_s, v_s, x_f = qkv_all.chunk(3, dim=1)
 
-        q_s = rearrange(q_s, "b (head c) h w -> b head c (h w)", head=self.num_heads)
-        k_s = rearrange(k_s, "b (head c) h w -> b head c (h w)", head=self.num_heads)
+        # ==========================================
+        # 2. 空间域分支: Q_s 和 K_s 共享 X_s
+        # ==========================================
+        x_s_flat = rearrange(x_s, "b (head c) h w -> b head c (h w)", head=self.num_heads)
+        x_s_flat = F.normalize(x_s_flat, dim=-1)
         v_s = rearrange(v_s, "b (head c) h w -> b head c (h w)", head=self.num_heads)
 
-        q_s = F.normalize(q_s, dim=-1)
-        k_s = F.normalize(k_s, dim=-1)
-
-        attn_s = (q_s @ k_s.transpose(-2, -1)) * self.temperature
+        attn_s = (x_s_flat @ x_s_flat.transpose(-2, -1)) * self.temperature
         attn_s = attn_s.softmax(dim=-1)
 
         out_s = attn_s @ v_s
@@ -205,22 +205,19 @@ class DualAttention(nn.Module):
         out_s = self.proj_spatial(out_s)
 
         # ==========================================
-        # 2. 局部 8x8 频率域分支交互
+        # 3. 局部 8x8 频率域分支: Q_f 和 K_f 共享 X_f
         # ==========================================
         patch_size = 8
 
         # 切块 [b, c, h, w] -> [b, c, h//8, w//8, 8, 8]
-        q_patch = rearrange(
-            q_f, "b c (h p1) (w p2) -> b c h w p1 p2", p1=patch_size, p2=patch_size
-        )
-        k_patch = rearrange(
-            k_f, "b c (h p1) (w p2) -> b c h w p1 p2", p1=patch_size, p2=patch_size
+        x_f_patch = rearrange(
+            x_f, "b c (h p1) (w p2) -> b c h w p1 p2", p1=patch_size, p2=patch_size
         )
 
-        q_f_fft = torch.fft.rfft2(q_patch.float())
-        k_f_fft = torch.fft.rfft2(k_patch.float())
+        x_f_fft = torch.fft.rfft2(x_f_patch.float())
 
-        attn_f_fft = q_f_fft * k_f_fft
+        # X_f ⊙ X_f = |X_f|^2 (频谱能量)
+        attn_f_fft = x_f_fft * x_f_fft
         attn_f_patch = torch.fft.irfft2(attn_f_fft, s=(patch_size, patch_size))
 
         # 还原形状 [b, c, h//8, w//8, 8, 8] -> [b, c, h, w]
@@ -230,7 +227,6 @@ class DualAttention(nn.Module):
             p1=patch_size,
             p2=patch_size,
         )
-        # [修改点] 按照 FSAS 逻辑使用 LayerNorm 替换 Softmax
         attn_f = self.norm_f(attn_f)
 
         # ==========================================
