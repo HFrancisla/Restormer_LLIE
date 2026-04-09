@@ -330,6 +330,12 @@ def main():
                         )
                     msg_logger(log_vars)
 
+                    # Log progressive learning dynamic params as time-series
+                    if tb_logger:
+                        tb_logger.add_scalar("Progressive_Learning/gt_size", mini_gt_size, current_iter)
+                        tb_logger.add_scalar("Progressive_Learning/batch_size", mini_batch_size, current_iter)
+                        tb_logger.add_scalar("Progressive_Learning/acc_steps", acc_steps, current_iter)
+
                 # save training states
                 if current_iter % int(opt["logger"]["save_checkpoint_freq"]) == 0:
                     if opt["logger"].get("save_training_states", False):
