@@ -11,7 +11,7 @@ from pdb import set_trace as stx
 import numbers
 
 from einops import rearrange
-from torch_wavelets import DWT_2D, IDWT_2D
+from .torch_wavelets import DWT_2D, IDWT_2D
 from .extra_attention_raw import HTA, WTA
 
 
@@ -356,7 +356,9 @@ class DWT_ParallelAttn(nn.Module):
         k_spatial = torch.nn.functional.normalize(k_spatial, dim=-1)
 
         # C×C attention map
-        spatial_attn = (q_spatial @ k_spatial.transpose(-2, -1)) * self.spatial_temperature
+        spatial_attn = (
+            q_spatial @ k_spatial.transpose(-2, -1)
+        ) * self.spatial_temperature
         spatial_attn = spatial_attn.softmax(dim=-1)  # (b, head, c_per_head, c_per_head)
 
         # ============ Combine: spatial_attn @ dwt_out ============
