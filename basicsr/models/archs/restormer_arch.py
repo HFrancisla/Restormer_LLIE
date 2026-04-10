@@ -11,6 +11,7 @@ from pdb import set_trace as stx
 import numbers
 
 from einops import rearrange
+from torch_wavelets import DWT_2D, IDWT_2D
 from .extra_attention_raw import HTA, WTA
 
 
@@ -152,6 +153,106 @@ class Attention(nn.Module):
 
 
 ##########################################################################
+## DWT-Frequency Self-Attention (DWT-FSA)
+## Per-subband channel attention with MDTA-style transposed attention
+class DWT_PureAttn(nn.Module):
+    def __init__(self, dim, num_heads, bias):
+        super(DWT_PureAttn, self).__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+
+        # Q projection: 1×1 conv + 3×3 dwconv
+        self.q_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        self.q_dwconv = nn.Conv2d(
+            dim, dim, kernel_size=3, stride=1, padding=1, groups=dim, bias=bias
+        )
+
+        # K projection: 1×1 conv + 3×3 dwconv
+        self.k_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        self.k_dwconv = nn.Conv2d(
+            dim, dim, kernel_size=3, stride=1, padding=1, groups=dim, bias=bias
+        )
+
+        # V projection: 1×1 conv + 3×3 dwconv
+        self.v_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        self.v_dwconv = nn.Conv2d(
+            dim, dim, kernel_size=3, stride=1, padding=1, groups=dim, bias=bias
+        )
+
+        # DWT / IDWT (Haar wavelet)
+        self.dwt = DWT_2D(wave="haar")
+        self.idwt = IDWT_2D(wave="haar")
+
+        # Output 1×1 conv
+        self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+
+        # Q, K, V: 1×1 → 3×3 dwconv
+        q = self.q_dwconv(self.q_conv(x))
+        k = self.k_dwconv(self.k_conv(x))
+        v = self.v_dwconv(self.v_conv(x))
+
+        # DWT decomposition: (b, c, h, w) → (b, 4c, h/2, w/2)
+        q_dwt = self.dwt(q)
+        k_dwt = self.dwt(k)
+        v_dwt = self.dwt(v)
+
+        # Split into 4 subbands (LL, LH, HL, HH): each (b, c, h/2, w/2)
+        q_subs = q_dwt.chunk(4, dim=1)
+        k_subs = k_dwt.chunk(4, dim=1)
+        v_subs = v_dwt.chunk(4, dim=1)
+
+        h2, w2 = h // 2, w // 2
+        attended_subs = []
+
+        for q_s, k_s, v_s in zip(q_subs, k_subs, v_subs):
+            # MDTA-style multi-head channel attention per subband
+            # (b, c, h/2, w/2) → (b, head, c_per_head, hw/4)
+            q_s = rearrange(
+                q_s, "b (head c) h w -> b head c (h w)", head=self.num_heads
+            )
+            k_s = rearrange(
+                k_s, "b (head c) h w -> b head c (h w)", head=self.num_heads
+            )
+            v_s = rearrange(
+                v_s, "b (head c) h w -> b head c (h w)", head=self.num_heads
+            )
+
+            # Normalize Q, K along spatial dim
+            q_s = torch.nn.functional.normalize(q_s, dim=-1)
+            k_s = torch.nn.functional.normalize(k_s, dim=-1)
+
+            # Channel attention: (c_per_head × c_per_head)
+            attn = (q_s @ k_s.transpose(-2, -1)) * self.temperature
+            attn = attn.softmax(dim=-1)
+
+            # Apply attention to V
+            out_s = attn @ v_s
+
+            # (b, head, c_per_head, hw/4) → (b, c, h/2, w/2)
+            out_s = rearrange(
+                out_s,
+                "b head c (h w) -> b (head c) h w",
+                head=self.num_heads,
+                h=h2,
+                w=w2,
+            )
+            attended_subs.append(out_s)
+
+        # Concatenate 4 subbands: (b, 4c, h/2, w/2)
+        out_dwt = torch.cat(attended_subs, dim=1)
+
+        # IDWT reconstruction: (b, 4c, h/2, w/2) → (b, c, h, w)
+        out = self.idwt(out_dwt)
+
+        # Output 1×1 projection
+        out = self.project_out(out)
+        return out
+
+
+##########################################################################
 class TransformerBlock(nn.Module):
     def __init__(
         self,
@@ -173,6 +274,8 @@ class TransformerBlock(nn.Module):
             self.attn = HTA(dim, num_heads, bias)
         elif attn_type == "WTA":
             self.attn = WTA(dim, num_heads, bias)
+        elif attn_type == "DWT_FSA":
+            self.attn = DWT_PureAttn(dim, num_heads, bias)
         # elif (
         #     attn_type == "IRS"
         # ):  # Intra-Row Self-Attention, which is vertical attention

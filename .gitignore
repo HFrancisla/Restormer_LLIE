@@ -20,3 +20,5 @@ tb_logger/
 meat*
 wandb/
 Temp/
+
+!DWT*.jpg
