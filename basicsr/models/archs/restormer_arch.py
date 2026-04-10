@@ -253,6 +253,131 @@ class DWT_PureAttn(nn.Module):
 
 
 ##########################################################################
+## DWT-Frequency Self-Attention with Parallel Spatial Attention (DWT-Parallel)
+## DWT branch + MDTA-style C×C spatial attention applied to DWT output
+class DWT_ParallelAttn(nn.Module):
+    def __init__(self, dim, num_heads, bias):
+        super(DWT_ParallelAttn, self).__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+
+        # Q projection: 1×1 conv + 3×3 dwconv
+        self.q_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        self.q_dwconv = nn.Conv2d(
+            dim, dim, kernel_size=3, stride=1, padding=1, groups=dim, bias=bias
+        )
+
+        # K projection: 1×1 conv + 3×3 dwconv
+        self.k_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        self.k_dwconv = nn.Conv2d(
+            dim, dim, kernel_size=3, stride=1, padding=1, groups=dim, bias=bias
+        )
+
+        # V projection: 1×1 conv + 3×3 dwconv
+        self.v_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        self.v_dwconv = nn.Conv2d(
+            dim, dim, kernel_size=3, stride=1, padding=1, groups=dim, bias=bias
+        )
+
+        # DWT / IDWT (Haar wavelet)
+        self.dwt = DWT_2D(wave="haar")
+        self.idwt = IDWT_2D(wave="haar")
+
+        # DWT branch output 1×1 conv (after IDWT)
+        self.dwt_project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+
+        # Spatial branch temperature (separate from DWT branch)
+        self.spatial_temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+
+        # Final 1×1 conv after combining spatial attn with DWT output
+        self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+
+        # Q, K, V: 1×1 → 3×3 dwconv
+        q = self.q_dwconv(self.q_conv(x))
+        k = self.k_dwconv(self.k_conv(x))
+        v = self.v_dwconv(self.v_conv(x))
+
+        # ============ DWT Branch (same as DWT_PureAttn) ============
+        q_dwt = self.dwt(q)
+        k_dwt = self.dwt(k)
+        v_dwt = self.dwt(v)
+
+        q_subs = q_dwt.chunk(4, dim=1)
+        k_subs = k_dwt.chunk(4, dim=1)
+        v_subs = v_dwt.chunk(4, dim=1)
+
+        h2, w2 = h // 2, w // 2
+        attended_subs = []
+
+        for q_s, k_s, v_s in zip(q_subs, k_subs, v_subs):
+            q_s = rearrange(
+                q_s, "b (head c) h w -> b head c (h w)", head=self.num_heads
+            )
+            k_s = rearrange(
+                k_s, "b (head c) h w -> b head c (h w)", head=self.num_heads
+            )
+            v_s = rearrange(
+                v_s, "b (head c) h w -> b head c (h w)", head=self.num_heads
+            )
+
+            q_s = torch.nn.functional.normalize(q_s, dim=-1)
+            k_s = torch.nn.functional.normalize(k_s, dim=-1)
+
+            attn = (q_s @ k_s.transpose(-2, -1)) * self.temperature
+            attn = attn.softmax(dim=-1)
+
+            out_s = attn @ v_s
+
+            out_s = rearrange(
+                out_s,
+                "b head c (h w) -> b (head c) h w",
+                head=self.num_heads,
+                h=h2,
+                w=w2,
+            )
+            attended_subs.append(out_s)
+
+        out_dwt = torch.cat(attended_subs, dim=1)
+        dwt_out = self.idwt(out_dwt)
+        dwt_out = self.dwt_project_out(dwt_out)  # DWT branch 1×1 conv
+
+        # ============ Spatial Branch (MDTA-style C×C attention) ============
+        q_spatial = rearrange(
+            q, "b (head c) h w -> b head c (h w)", head=self.num_heads
+        )
+        k_spatial = rearrange(
+            k, "b (head c) h w -> b head c (h w)", head=self.num_heads
+        )
+
+        q_spatial = torch.nn.functional.normalize(q_spatial, dim=-1)
+        k_spatial = torch.nn.functional.normalize(k_spatial, dim=-1)
+
+        # C×C attention map
+        spatial_attn = (q_spatial @ k_spatial.transpose(-2, -1)) * self.spatial_temperature
+        spatial_attn = spatial_attn.softmax(dim=-1)  # (b, head, c_per_head, c_per_head)
+
+        # ============ Combine: spatial_attn @ dwt_out ============
+        dwt_out_heads = rearrange(
+            dwt_out, "b (head c) h w -> b head c (h w)", head=self.num_heads
+        )
+        combined = spatial_attn @ dwt_out_heads  # (b, head, c_per_head, hw)
+        combined = rearrange(
+            combined,
+            "b head c (h w) -> b (head c) h w",
+            head=self.num_heads,
+            h=h,
+            w=w,
+        )
+
+        # Final 1×1 conv
+        out = self.project_out(combined)
+        return out
+
+
+##########################################################################
 class TransformerBlock(nn.Module):
     def __init__(
         self,
@@ -274,8 +399,10 @@ class TransformerBlock(nn.Module):
             self.attn = HTA(dim, num_heads, bias)
         elif attn_type == "WTA":
             self.attn = WTA(dim, num_heads, bias)
-        elif attn_type == "DWT_FSA":
+        elif attn_type == "DWT_Pure":
             self.attn = DWT_PureAttn(dim, num_heads, bias)
+        elif attn_type == "DWT_Parallel":
+            self.attn = DWT_ParallelAttn(dim, num_heads, bias)
         # elif (
         #     attn_type == "IRS"
         # ):  # Intra-Row Self-Attention, which is vertical attention

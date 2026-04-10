@@ -1,5 +1,5 @@
 # general settings
-name: Restormer_LOLv2_128_16_cos_25k
+name: Restormer_LOLv2_128_16_cos_25k_DWT_Pure
 model_type: ImageCleanModel
 scale: 1
 num_gpu: 1
@@ -57,6 +57,8 @@ network_g:
   ffn_expansion_factor: 2.66
   bias: False
   LayerNorm_type: WithBias
+  # attn_types: ["DWT_Parallel", "DWT_Parallel", "DWT_Parallel", "DWT_Parallel"]
+  attn_types: ["DWT_Pure", "DWT_Pure", "DWT_Pure", "DWT_Pure"] # DWT_Pure (无空间分支)
   dual_pixel_task: False
   use_checkpoint: True # 开启梯度检查点以支持 Batch 32
 
