@@ -16,6 +16,7 @@ class DWT_Function(Function):
         ctx.shape = x.shape
 
         dim = x.shape[1]
+        w_ll, w_lh, w_hl, w_hh = w_ll.to(x.dtype), w_lh.to(x.dtype), w_hl.to(x.dtype), w_hh.to(x.dtype)
         x_ll = torch.nn.functional.conv2d(x, w_ll.expand(dim, -1, -1, -1), stride = 2, groups = dim)
         x_lh = torch.nn.functional.conv2d(x, w_lh.expand(dim, -1, -1, -1), stride = 2, groups = dim)
         x_hl = torch.nn.functional.conv2d(x, w_hl.expand(dim, -1, -1, -1), stride = 2, groups = dim)
@@ -31,7 +32,7 @@ class DWT_Function(Function):
             dx = dx.view(B, 4, -1, H//2, W//2)
 
             dx = dx.transpose(1,2).reshape(B, -1, H//2, W//2)
-            filters = torch.cat([w_ll, w_lh, w_hl, w_hh], dim=0).repeat(C, 1, 1, 1)
+            filters = torch.cat([w_ll, w_lh, w_hl, w_hh], dim=0).to(dx.dtype).repeat(C, 1, 1, 1)
             dx = torch.nn.functional.conv_transpose2d(dx, filters, stride=2, groups=C)
 
         return dx, None, None, None, None
@@ -46,7 +47,7 @@ class IDWT_Function(Function):
         x = x.view(B, 4, -1, H, W).transpose(1, 2)
         C = x.shape[1]
         x = x.reshape(B, -1, H, W)
-        filters = filters.repeat(C, 1, 1, 1)
+        filters = filters.to(x.dtype).repeat(C, 1, 1, 1)
         x = torch.nn.functional.conv_transpose2d(x, filters, stride=2, groups=C)
         return x
 
@@ -59,7 +60,7 @@ class IDWT_Function(Function):
             C = C // 4
             dx = dx.contiguous()
 
-            w_ll, w_lh, w_hl, w_hh = torch.unbind(filters, dim=0)
+            w_ll, w_lh, w_hl, w_hh = torch.unbind(filters.to(dx.dtype), dim=0)
             x_ll = torch.nn.functional.conv2d(dx, w_ll.unsqueeze(1).expand(C, -1, -1, -1), stride = 2, groups = C)
             x_lh = torch.nn.functional.conv2d(dx, w_lh.unsqueeze(1).expand(C, -1, -1, -1), stride = 2, groups = C)
             x_hl = torch.nn.functional.conv2d(dx, w_hl.unsqueeze(1).expand(C, -1, -1, -1), stride = 2, groups = C)
@@ -85,7 +86,6 @@ class IDWT_2D(nn.Module):
         w_hh = w_hh.unsqueeze(0).unsqueeze(1)
         filters = torch.cat([w_ll, w_lh, w_hl, w_hh], dim=0)
         self.register_buffer('filters', filters)
-        self.filters = self.filters.to(dtype=torch.float16)
 
     def forward(self, x):
         return IDWT_Function.apply(x, self.filters)
@@ -106,11 +106,6 @@ class DWT_2D(nn.Module):
         self.register_buffer('w_lh', w_lh.unsqueeze(0).unsqueeze(0))
         self.register_buffer('w_hl', w_hl.unsqueeze(0).unsqueeze(0))
         self.register_buffer('w_hh', w_hh.unsqueeze(0).unsqueeze(0))
-
-        self.w_ll = self.w_ll.to(dtype=torch.float16)
-        self.w_lh = self.w_lh.to(dtype=torch.float16)
-        self.w_hl = self.w_hl.to(dtype=torch.float16)
-        self.w_hh = self.w_hh.to(dtype=torch.float16)
 
     def forward(self, x):
         return DWT_Function.apply(x, self.w_ll, self.w_lh, self.w_hl, self.w_hh)
