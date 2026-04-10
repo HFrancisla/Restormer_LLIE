@@ -247,9 +247,6 @@ class DualAttention(nn.Module):
         # --- 空间分支投影 ---
         self.proj_spatial = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
 
-        # --- 频率分支的 LayerNorm (FSAS Style) ---
-        self.norm_f = LayerNorm(dim, LayerNorm_type)
-
         # --- 特征融合投影 ---
         self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
 
