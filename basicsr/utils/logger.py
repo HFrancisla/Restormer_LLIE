@@ -120,8 +120,6 @@ def init_wandb_logger(opt):
         sync_tensorboard=True,
     )
 
-    # 默认将 "iteration" 设置为所有指标的横轴（Step Metric）
-    wandb.define_metric("*", step_metric="iteration")
 
     logger.info(f"Use wandb logger with id={wandb_id}; project={project}.")
 
