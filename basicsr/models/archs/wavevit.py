@@ -8,7 +8,7 @@ from timm.models.registry import register_model
 from timm.models.vision_transformer import _cfg
 import math
 import numpy as np
-from .torch_wavelets import DWT_2D, IDWT_2D
+from .haar_wavelets import DWT_2D, IDWT_2D
 
 
 def rand_bbox(size, lam, scale=1):

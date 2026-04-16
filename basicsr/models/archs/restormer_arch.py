@@ -12,7 +12,7 @@ import numbers
 
 from einops import rearrange
 from .extra_attention_raw import HTA, WTA
-from .torch_wavelets import DWT_2D, IDWT_2D
+from .haar_wavelets import DWT_2D, IDWT_2D
 
 
 ##########################################################################

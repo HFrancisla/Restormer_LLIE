@@ -104,8 +104,8 @@ class IDWT_2D(nn.Module):
         rec_lo = torch.Tensor(w.rec_lo)
 
         w_ll = rec_lo.unsqueeze(0) * rec_lo.unsqueeze(1)
-        w_lh = rec_lo.unsqueeze(0) * rec_hi.unsqueeze(1)
-        w_hl = rec_hi.unsqueeze(0) * rec_lo.unsqueeze(1)
+        w_lh = rec_hi.unsqueeze(0) * rec_lo.unsqueeze(1)
+        w_hl = rec_lo.unsqueeze(0) * rec_hi.unsqueeze(1)
         w_hh = rec_hi.unsqueeze(0) * rec_hi.unsqueeze(1)
 
         w_ll = w_ll.unsqueeze(0).unsqueeze(1)
@@ -127,8 +127,8 @@ class DWT_2D(nn.Module):
         dec_lo = torch.Tensor(w.dec_lo[::-1])
 
         w_ll = dec_lo.unsqueeze(0) * dec_lo.unsqueeze(1)
-        w_lh = dec_lo.unsqueeze(0) * dec_hi.unsqueeze(1)
-        w_hl = dec_hi.unsqueeze(0) * dec_lo.unsqueeze(1)
+        w_lh = dec_hi.unsqueeze(0) * dec_lo.unsqueeze(1)
+        w_hl = dec_lo.unsqueeze(0) * dec_hi.unsqueeze(1)
         w_hh = dec_hi.unsqueeze(0) * dec_hi.unsqueeze(1)
 
         self.register_buffer("w_ll", w_ll.unsqueeze(0).unsqueeze(0))
