@@ -12,7 +12,7 @@ import numbers
 
 from einops import rearrange
 from .extra_attention_raw import HTA, WTA
-from .torch_wavelets import DWT_2D, IDWT_2D
+from .haar_wavelets import DWT_2D, IDWT_2D
 
 
 ##########################################################################
@@ -364,9 +364,7 @@ class Restormer(nn.Module):
         )
 
         self.up4_3 = IDWT_Upsample()  ## From Level 4 to Level 3 (IDWT)
-        self.reduce_chan_level3 = nn.Conv2d(
-            int(dim * 2), dim, kernel_size=1, bias=bias
-        )
+        self.reduce_chan_level3 = nn.Conv2d(int(dim * 2), dim, kernel_size=1, bias=bias)
         self.decoder_level3 = nn.Sequential(
             *[
                 TransformerBlock(
@@ -383,9 +381,7 @@ class Restormer(nn.Module):
         )
 
         self.up3_2 = IDWT_Upsample()  ## From Level 3 to Level 2 (IDWT)
-        self.reduce_chan_level2 = nn.Conv2d(
-            int(dim * 2), dim, kernel_size=1, bias=bias
-        )
+        self.reduce_chan_level2 = nn.Conv2d(int(dim * 2), dim, kernel_size=1, bias=bias)
         self.decoder_level2 = nn.Sequential(
             *[
                 TransformerBlock(
