@@ -131,7 +131,8 @@ class Intra_Attention_withZeromap(nn.Module):
             groups=dim * 4,
             bias=bias,
         )
-        self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        self.project_out_main = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        self.project_out_zero = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
 
     def forward(self, x, zero_map):
         b, c, h, w = x.shape
@@ -222,8 +223,8 @@ class Intra_Attention_withZeromap(nn.Module):
             w1=W // self.N,
         )
 
-        out = self.project_out(out)
-        out_zero = self.project_out(out_zero)
+        out = self.project_out_main(out)
+        out_zero = self.project_out_zero(out_zero)
 
         out = out[:, :, :h, :w]
         out_zero = out_zero[:, :, :h, :w]
@@ -234,9 +235,9 @@ class Intra_Attention_withZeromap(nn.Module):
         return V1 + V2
 
 
-class FeedForward(nn.Module):
+class GDFN(nn.Module):
     def __init__(self, dim, ffn_expansion_factor, bias):
-        super(FeedForward, self).__init__()
+        super(GDFN, self).__init__()
 
         hidden_features = int(dim * ffn_expansion_factor)
 
@@ -277,7 +278,7 @@ class IIZAT(nn.Module):
         self.attn_inter = Inter_Attention(dim, num_heads, bias)
         self.attn_intra = Intra_Attention_withZeromap(dim, num_heads, bias, N=N)
         self.norm2 = LayerNorm(dim, LayerNorm_type)
-        self.ffn = FeedForward(dim, ffn_expansion_factor, bias)
+        self.ffn = GDFN(dim, ffn_expansion_factor, bias)
 
     def forward(self, x, zero_map):
         m = self.attn_inter(x, zero_map)
