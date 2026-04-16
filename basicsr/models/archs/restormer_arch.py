@@ -12,6 +12,7 @@ import numbers
 
 from einops import rearrange
 from .extra_attention_raw import HTA, WTA
+from .torch_wavelets import DWT_2D, IDWT_2D
 
 
 ##########################################################################
@@ -218,6 +219,8 @@ class Downsample(nn.Module):
     def __init__(self, n_feat):
         super(Downsample, self).__init__()
 
+        # 3×3 Conv 先将通道数减半：C → C/2
+        # PixelUnshuffle(2) 将空间尺寸缩小 2×，同时通道数 ×4：C/2 → C/2×4 = 2C
         self.body = nn.Sequential(
             nn.Conv2d(
                 n_feat, n_feat // 2, kernel_size=3, stride=1, padding=1, bias=False
@@ -242,6 +245,41 @@ class Upsample(nn.Module):
 
     def forward(self, x):
         return self.body(x)
+
+
+class DWT_Downsample(nn.Module):
+    """DWT-based downsampling: LL as downsampled features, LH/HL/HH as detail skip."""
+
+    def __init__(self, n_feat, wave="haar"):
+        super(DWT_Downsample, self).__init__()
+        self.dwt = DWT_2D(wave)
+        self.channel_expand = nn.Conv2d(n_feat, n_feat * 2, kernel_size=1, bias=False)
+
+    def forward(self, x):
+        # x: (B, C, H, W)
+        dwt_out = self.dwt(x)  # (B, 4C, H/2, W/2)
+        C = dwt_out.shape[1] // 4
+        x_ll = dwt_out[:, :C, :, :]  # (B, C, H/2, W/2)
+        x_detail = dwt_out[:, C:, :, :]  # (B, 3C, H/2, W/2) = [LH, HL, HH]
+        x_ll = self.channel_expand(x_ll)  # (B, 2C, H/2, W/2)
+        return x_ll, x_detail
+
+
+class IDWT_Upsample(nn.Module):
+    """IDWT-based upsampling: combines decoder features (as LL) with encoder detail coefficients."""
+
+    def __init__(self, n_feat, wave="haar"):
+        super(IDWT_Upsample, self).__init__()
+        self.idwt = IDWT_2D(wave)
+        self.channel_reduce = nn.Conv2d(n_feat, n_feat // 2, kernel_size=1, bias=False)
+
+    def forward(self, x, detail):
+        # x: (B, 2C, H/2, W/2) - decoder features
+        # detail: (B, 3C, H/2, W/2) - [LH, HL, HH] from encoder DWT
+        x_ll = self.channel_reduce(x)  # (B, C, H/2, W/2)
+        idwt_in = torch.cat([x_ll, detail], dim=1)  # (B, 4C, H/2, W/2)
+        out = self.idwt(idwt_in)  # (B, C, 2H, 2W)
+        return out
 
 
 ##########################################################################
@@ -281,7 +319,7 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.down1_2 = Downsample(dim)  ## From Level 1 to Level 2
+        self.down1_2 = DWT_Downsample(dim)  ## From Level 1 to Level 2 (DWT)
         self.encoder_level2 = nn.Sequential(
             *[
                 TransformerBlock(
@@ -297,7 +335,7 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.down2_3 = Downsample(int(dim * 2**1))  ## From Level 2 to Level 3
+        self.down2_3 = DWT_Downsample(int(dim * 2**1))  ## From Level 2 to Level 3 (DWT)
         self.encoder_level3 = nn.Sequential(
             *[
                 TransformerBlock(
@@ -313,7 +351,7 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.down3_4 = Downsample(int(dim * 2**2))  ## From Level 3 to Level 4
+        self.down3_4 = DWT_Downsample(int(dim * 2**2))  ## From Level 3 to Level 4 (DWT)
         self.latent = nn.Sequential(
             *[
                 TransformerBlock(
@@ -329,7 +367,7 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up4_3 = Upsample(int(dim * 2**3))  ## From Level 4 to Level 3
+        self.up4_3 = IDWT_Upsample(int(dim * 2**3))  ## From Level 4 to Level 3 (IDWT)
         self.reduce_chan_level3 = nn.Conv2d(
             int(dim * 2**3), int(dim * 2**2), kernel_size=1, bias=bias
         )
@@ -348,7 +386,7 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up3_2 = Upsample(int(dim * 2**2))  ## From Level 3 to Level 2
+        self.up3_2 = IDWT_Upsample(int(dim * 2**2))  ## From Level 3 to Level 2 (IDWT)
         self.reduce_chan_level2 = nn.Conv2d(
             int(dim * 2**2), int(dim * 2**1), kernel_size=1, bias=bias
         )
@@ -367,9 +405,7 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up2_1 = Upsample(
-            int(dim * 2**1)
-        )  ## From Level 2 to Level 1  (NO 1x1 conv to reduce channels)
+        self.up2_1 = IDWT_Upsample(int(dim * 2**1))  ## From Level 2 to Level 1 (IDWT)
 
         self.decoder_level1 = nn.Sequential(
             *[
@@ -415,26 +451,26 @@ class Restormer(nn.Module):
         inp_enc_level1 = self.patch_embed(inp_img)
         out_enc_level1 = self.encoder_level1(inp_enc_level1)
 
-        inp_enc_level2 = self.down1_2(out_enc_level1)
+        inp_enc_level2, detail1 = self.down1_2(out_enc_level1)
         out_enc_level2 = self.encoder_level2(inp_enc_level2)
 
-        inp_enc_level3 = self.down2_3(out_enc_level2)
+        inp_enc_level3, detail2 = self.down2_3(out_enc_level2)
         out_enc_level3 = self.encoder_level3(inp_enc_level3)
 
-        inp_enc_level4 = self.down3_4(out_enc_level3)
+        inp_enc_level4, detail3 = self.down3_4(out_enc_level3)
         latent = self.latent(inp_enc_level4)
 
-        inp_dec_level3 = self.up4_3(latent)
+        inp_dec_level3 = self.up4_3(latent, detail3)
         inp_dec_level3 = torch.cat([inp_dec_level3, out_enc_level3], 1)
         inp_dec_level3 = self.reduce_chan_level3(inp_dec_level3)
         out_dec_level3 = self.decoder_level3(inp_dec_level3)
 
-        inp_dec_level2 = self.up3_2(out_dec_level3)
+        inp_dec_level2 = self.up3_2(out_dec_level3, detail2)
         inp_dec_level2 = torch.cat([inp_dec_level2, out_enc_level2], 1)
         inp_dec_level2 = self.reduce_chan_level2(inp_dec_level2)
         out_dec_level2 = self.decoder_level2(inp_dec_level2)
 
-        inp_dec_level1 = self.up2_1(out_dec_level2)
+        inp_dec_level1 = self.up2_1(out_dec_level2, detail1)
         inp_dec_level1 = torch.cat([inp_dec_level1, out_enc_level1], 1)
         out_dec_level1 = self.decoder_level1(inp_dec_level1)
 
