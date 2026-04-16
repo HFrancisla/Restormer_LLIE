@@ -45,8 +45,8 @@ class DWT_2D(nn.Module):
 
         # Haar DWT — matches the conv2d implementation output exactly.
         ll = (x_ee + x_eo + x_oe + x_oo) * 0.5
-        lh = (x_ee + x_eo - x_oe - x_oo) * 0.5
-        hl = (x_ee - x_eo + x_oe - x_oo) * 0.5
+        lh = (x_ee - x_eo + x_oe - x_oo) * 0.5
+        hl = (x_ee + x_eo - x_oe - x_oo) * 0.5
         hh = (x_ee - x_eo - x_oe + x_oo) * 0.5
 
         return torch.cat([ll, lh, hl, hh], dim=1)
@@ -78,8 +78,8 @@ class IDWT_2D(nn.Module):
 
         # Inverse Haar transform — recover sub-pixel values.
         x_ee = (ll + lh + hl + hh) * 0.5
-        x_eo = (ll + lh - hl - hh) * 0.5
-        x_oe = (ll - lh + hl - hh) * 0.5
+        x_eo = (ll - lh + hl - hh) * 0.5
+        x_oe = (ll + lh - hl - hh) * 0.5
         x_oo = (ll - lh - hl + hh) * 0.5
 
         # Per-channel interleaved order for pixel_shuffle
