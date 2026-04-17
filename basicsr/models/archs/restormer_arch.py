@@ -248,21 +248,20 @@ class Upsample(nn.Module):
 
 
 class DWT_Downsample(nn.Module):
-    """DWT-based downsampling: LL as downsampled features, LH/HL/HH as detail skip."""
+    """DWT-based downsampling: fuse LL/LH/HL/HH for encoder, keep LH/HL/HH as detail skip."""
 
     def __init__(self, n_feat, wave="haar"):
         super(DWT_Downsample, self).__init__()
         self.dwt = DWT_2D(wave)
-        self.channel_expand = nn.Conv2d(n_feat, n_feat * 2, kernel_size=1, bias=False)
+        self.channel_fuse = nn.Conv2d(n_feat * 4, n_feat * 2, kernel_size=1, bias=False)
 
     def forward(self, x):
         # x: (B, C, H, W)
         dwt_out = self.dwt(x)  # (B, 4C, H/2, W/2)
         C = dwt_out.shape[1] // 4
-        x_ll = dwt_out[:, :C, :, :]  # (B, C, H/2, W/2)
         x_detail = dwt_out[:, C:, :, :]  # (B, 3C, H/2, W/2) = [LH, HL, HH]
-        x_ll = self.channel_expand(x_ll)  # (B, 2C, H/2, W/2)
-        return x_ll, x_detail
+        x_fused = self.channel_fuse(dwt_out)  # (B, 2C, H/2, W/2)
+        return x_fused, x_detail
 
 
 class IDWT_Upsample(nn.Module):
