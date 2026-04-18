@@ -298,7 +298,7 @@ class Restormer(nn.Module):
     ):
         super(Restormer, self).__init__()
 
-        self.patch_embed = OverlapPatchEmbed(inp_channels, dim)
+        self.patch_embed = OverlapPatchEmbed(inp_channels, dim)  ## 3 → dim(48), H×W
 
         self.encoder_level1 = nn.Sequential(
             *[
@@ -315,7 +315,8 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.down1_2 = DWT_Downsample()  ## From Level 1 to Level 2 (DWT)
+        ## DWT下采样: dim(48),H×W → LL: dim(48),H/2×W/2 + detail1: 3*dim(144),H/2×W/2
+        self.down1_2 = DWT_Downsample()
         self.encoder_level2 = nn.Sequential(
             *[
                 TransformerBlock(
@@ -331,7 +332,8 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.down2_3 = DWT_Downsample()  ## From Level 2 to Level 3 (DWT)
+        ## DWT下采样: dim(48),H/2×W/2 → LL: dim(48),H/4×W/4 + detail2: 3*dim(144),H/4×W/4
+        self.down2_3 = DWT_Downsample()
         self.encoder_level3 = nn.Sequential(
             *[
                 TransformerBlock(
@@ -347,7 +349,8 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.down3_4 = DWT_Downsample()  ## From Level 3 to Level 4 (DWT)
+        ## DWT下采样: dim(48),H/4×W/4 → LL: dim(48),H/8×W/8 + detail3: 3*dim(144),H/8×W/8
+        self.down3_4 = DWT_Downsample()
         self.latent = nn.Sequential(
             *[
                 TransformerBlock(
@@ -363,7 +366,8 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up4_3 = IDWT_Upsample()  ## From Level 4 to Level 3 (IDWT)
+        ## IDWT上采样: dim(48)+3*dim(144)→IDWT→ dim(48),H/4×W/4; cat enc3后 2*dim(96)→1×1Conv→dim(48)
+        self.up4_3 = IDWT_Upsample()
         self.reduce_chan_level3 = nn.Conv2d(int(dim * 2), dim, kernel_size=1, bias=bias)
         self.decoder_level3 = nn.Sequential(
             *[
@@ -380,7 +384,8 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up3_2 = IDWT_Upsample()  ## From Level 3 to Level 2 (IDWT)
+        ## IDWT上采样: dim(48)+3*dim(144)→IDWT→ dim(48),H/2×W/2; cat enc2后 2*dim(96)→1×1Conv→dim(48)
+        self.up3_2 = IDWT_Upsample()
         self.reduce_chan_level2 = nn.Conv2d(int(dim * 2), dim, kernel_size=1, bias=bias)
         self.decoder_level2 = nn.Sequential(
             *[
@@ -397,8 +402,10 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up2_1 = IDWT_Upsample()  ## From Level 2 to Level 1 (IDWT)
+        ## IDWT上采样: dim(48)+3*dim(144)→IDWT→ dim(48),H×W; cat enc1后 2*dim(96), 无reduce_chan
+        self.up2_1 = IDWT_Upsample()
 
+        ## 注意: decoder_level1 在 2*dim=96 通道上运行（cat后未降通道）
         self.decoder_level1 = nn.Sequential(
             *[
                 TransformerBlock(
@@ -435,38 +442,43 @@ class Restormer(nn.Module):
             self.skip_conv = nn.Conv2d(dim, int(dim * 2**1), kernel_size=1, bias=bias)
         ###########################
 
-        self.output = nn.Conv2d(
+        self.output = nn.Conv2d(  ## 2*dim(96) → out_channels(3)
             int(dim * 2**1), out_channels, kernel_size=3, stride=1, padding=1, bias=bias
         )
 
     def forward(self, inp_img):
-        inp_enc_level1 = self.patch_embed(inp_img)
-        out_enc_level1 = self.encoder_level1(inp_enc_level1)
+        ## -------- Encoder --------
+        inp_enc_level1 = self.patch_embed(inp_img)          # (B, 48, H, W)
+        out_enc_level1 = self.encoder_level1(inp_enc_level1) # (B, 48, H, W)
 
-        inp_enc_level2, detail1 = self.down1_2(out_enc_level1)
-        out_enc_level2 = self.encoder_level2(inp_enc_level2)
+        inp_enc_level2, detail1 = self.down1_2(out_enc_level1)  # LL:(B,48,H/2,W/2), detail1:(B,144,H/2,W/2)
+        out_enc_level2 = self.encoder_level2(inp_enc_level2)     # (B, 48, H/2, W/2)
 
-        inp_enc_level3, detail2 = self.down2_3(out_enc_level2)
-        out_enc_level3 = self.encoder_level3(inp_enc_level3)
+        inp_enc_level3, detail2 = self.down2_3(out_enc_level2)  # LL:(B,48,H/4,W/4), detail2:(B,144,H/4,W/4)
+        out_enc_level3 = self.encoder_level3(inp_enc_level3)     # (B, 48, H/4, W/4)
 
-        inp_enc_level4, detail3 = self.down3_4(out_enc_level3)
-        latent = self.latent(inp_enc_level4)
+        inp_enc_level4, detail3 = self.down3_4(out_enc_level3)  # LL:(B,48,H/8,W/8), detail3:(B,144,H/8,W/8)
 
-        inp_dec_level3 = self.up4_3(latent, detail3)
-        inp_dec_level3 = torch.cat([inp_dec_level3, out_enc_level3], 1)
-        inp_dec_level3 = self.reduce_chan_level3(inp_dec_level3)
-        out_dec_level3 = self.decoder_level3(inp_dec_level3)
+        ## -------- Bottleneck --------
+        latent = self.latent(inp_enc_level4)                     # (B, 48, H/8, W/8)
 
-        inp_dec_level2 = self.up3_2(out_dec_level3, detail2)
-        inp_dec_level2 = torch.cat([inp_dec_level2, out_enc_level2], 1)
-        inp_dec_level2 = self.reduce_chan_level2(inp_dec_level2)
-        out_dec_level2 = self.decoder_level2(inp_dec_level2)
+        ## -------- Decoder --------
+        inp_dec_level3 = self.up4_3(latent, detail3)             # IDWT → (B, 48, H/4, W/4)
+        inp_dec_level3 = torch.cat([inp_dec_level3, out_enc_level3], 1)  # (B, 96, H/4, W/4)
+        inp_dec_level3 = self.reduce_chan_level3(inp_dec_level3)  # 1×1Conv: (B, 48, H/4, W/4)
+        out_dec_level3 = self.decoder_level3(inp_dec_level3)     # (B, 48, H/4, W/4)
 
-        inp_dec_level1 = self.up2_1(out_dec_level2, detail1)
-        inp_dec_level1 = torch.cat([inp_dec_level1, out_enc_level1], 1)
-        out_dec_level1 = self.decoder_level1(inp_dec_level1)
+        inp_dec_level2 = self.up3_2(out_dec_level3, detail2)     # IDWT → (B, 48, H/2, W/2)
+        inp_dec_level2 = torch.cat([inp_dec_level2, out_enc_level2], 1)  # (B, 96, H/2, W/2)
+        inp_dec_level2 = self.reduce_chan_level2(inp_dec_level2)  # 1×1Conv: (B, 48, H/2, W/2)
+        out_dec_level2 = self.decoder_level2(inp_dec_level2)     # (B, 48, H/2, W/2)
 
-        out_dec_level1 = self.refinement(out_dec_level1)
+        inp_dec_level1 = self.up2_1(out_dec_level2, detail1)     # IDWT → (B, 48, H, W)
+        inp_dec_level1 = torch.cat([inp_dec_level1, out_enc_level1], 1)  # (B, 96, H, W)
+        ## 注意: 此处无 reduce_chan, 直接以96通道送入decoder_level1
+        out_dec_level1 = self.decoder_level1(inp_dec_level1)     # (B, 96, H, W)
+
+        out_dec_level1 = self.refinement(out_dec_level1)         # (B, 96, H, W)
 
         #### For Dual-Pixel Defocus Deblurring Task ####
         if self.dual_pixel_task:
