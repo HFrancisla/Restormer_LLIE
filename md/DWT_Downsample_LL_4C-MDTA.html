@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Restormer DWT/IDWT Flowchart</title>
+<style>
+  body {
+    background: #1a1a2e;
+    color: #eee;
+    font-family: 'Segoe UI', sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 30px;
+    margin: 0;
+  }
+  svg {
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.3));
+  }
+  .box {
+    rx: 8; ry: 8;
+  }
+  .encoder-box { fill: #0f3460; stroke: #5390d9; stroke-width: 2; }
+  .decoder-box { fill: #3a0ca3; stroke: #7b2ff7; stroke-width: 2; }
+  .down-box    { fill: #b5179e; stroke: #f72585; stroke-width: 2; }
+  .up-box      { fill: #f77f00; stroke: #fcbf49; stroke-width: 2; }
+  .latent-box  { fill: #d62828; stroke: #f77f00; stroke-width: 2; }
+  .io-box      { fill: #264653; stroke: #2a9d8f; stroke-width: 2; }
+  .refine-box  { fill: #1b4332; stroke: #40916c; stroke-width: 2; }
+
+  .label {
+    font-size: 14px; fill: #fff; text-anchor: middle;
+    dominant-baseline: central; font-weight: 600;
+  }
+  .sublabel {
+    font-size: 11px; fill: #ccc; text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .arrow { stroke: #aaa; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+  .skip-arrow { stroke: #5390d9; stroke-width: 2; stroke-dasharray: 6,4; fill: none; marker-end: url(#arrowhead-blue); }
+  .detail-arrow { stroke: #f72585; stroke-width: 2; stroke-dasharray: 4,3; fill: none; marker-end: url(#arrowhead-pink); }
+  .legend-text { font-size: 12px; fill: #ccc; dominant-baseline: central; }
+</style>
+</head>
+<body>
+<svg width="920" height="920" viewBox="0 0 920 920">
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#aaa"/>
+    </marker>
+    <marker id="arrowhead-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#5390d9"/>
+    </marker>
+    <marker id="arrowhead-pink" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#f72585"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="460" y="30" class="label" font-size="20">Restormer U-Net (DWT/IDWT 上下采样)</text>
+
+  <!-- ============ ENCODER SIDE (left) ============ -->
+  <!-- Input -->
+  <rect x="60" y="70" width="200" height="44" class="box io-box"/>
+  <text x="160" y="86" class="label">Input Image</text>
+  <text x="160" y="102" class="sublabel">(B, 3, H, W)</text>
+
+  <!-- Patch Embed -->
+  <rect x="60" y="140" width="200" height="44" class="box io-box"/>
+  <text x="160" y="156" class="label">Patch Embed (3×3 Conv)</text>
+  <text x="160" y="172" class="sublabel">(B, C, H, W)</text>
+  <line x1="160" y1="114" x2="160" y2="140" class="arrow"/>
+
+  <!-- Encoder Level 1 -->
+  <rect x="60" y="210" width="200" height="50" class="box encoder-box"/>
+  <text x="160" y="228" class="label">Encoder Level 1</text>
+  <text x="160" y="246" class="sublabel">TransformerBlock × N₁  dim=C</text>
+  <line x1="160" y1="184" x2="160" y2="210" class="arrow"/>
+
+  <!-- DWT Down 1→2 -->
+  <rect x="60" y="290" width="200" height="56" class="box down-box"/>
+  <text x="160" y="306" class="label">DWT_Downsample</text>
+  <text x="160" y="322" class="sublabel">DWT → (4C, H/2, W/2)</text>
+  <text x="160" y="336" class="sublabel">1×1 Conv → (2C, H/2, W/2)</text>
+  <line x1="160" y1="260" x2="160" y2="290" class="arrow"/>
+
+  <!-- Encoder Level 2 -->
+  <rect x="60" y="376" width="200" height="50" class="box encoder-box"/>
+  <text x="160" y="394" class="label">Encoder Level 2</text>
+  <text x="160" y="412" class="sublabel">TransformerBlock × N₂  dim=2C</text>
+  <line x1="160" y1="346" x2="160" y2="376" class="arrow"/>
+
+  <!-- DWT Down 2→3 -->
+  <rect x="60" y="456" width="200" height="56" class="box down-box"/>
+  <text x="160" y="472" class="label">DWT_Downsample</text>
+  <text x="160" y="488" class="sublabel">DWT → (8C, H/4, W/4)</text>
+  <text x="160" y="502" class="sublabel">1×1 Conv → (4C, H/4, W/4)</text>
+  <line x1="160" y1="426" x2="160" y2="456" class="arrow"/>
+
+  <!-- Encoder Level 3 -->
+  <rect x="60" y="542" width="200" height="50" class="box encoder-box"/>
+  <text x="160" y="560" class="label">Encoder Level 3</text>
+  <text x="160" y="578" class="sublabel">TransformerBlock × N₃  dim=4C</text>
+  <line x1="160" y1="512" x2="160" y2="542" class="arrow"/>
+
+  <!-- DWT Down 3→4 -->
+  <rect x="60" y="622" width="200" height="56" class="box down-box"/>
+  <text x="160" y="638" class="label">DWT_Downsample</text>
+  <text x="160" y="654" class="sublabel">DWT → (16C, H/8, W/8)</text>
+  <text x="160" y="668" class="sublabel">1×1 Conv → (8C, H/8, W/8)</text>
+  <line x1="160" y1="592" x2="160" y2="622" class="arrow"/>
+
+  <!-- Latent (bottom) -->
+  <rect x="310" y="720" width="300" height="50" class="box latent-box"/>
+  <text x="460" y="738" class="label">Latent (Bottleneck)</text>
+  <text x="460" y="754" class="sublabel">TransformerBlock × N₄  dim=8C  (H/8, W/8)</text>
+  <line x1="160" y1="678" x2="160" y2="700" class="arrow"/>
+  <line x1="160" y1="700" x2="310" y2="745" class="arrow"/>
+
+  <!-- ============ DECODER SIDE (right) ============ -->
+  <!-- IDWT Up 4→3 -->
+  <rect x="660" y="622" width="200" height="56" class="box up-box"/>
+  <text x="760" y="638" class="label">IDWT_Upsample</text>
+  <text x="760" y="654" class="sublabel">1×1 Conv: 8C → 4C (LL)</text>
+  <text x="760" y="668" class="sublabel">cat detail₃ → IDWT → (4C, H/4, W/4)</text>
+  <line x1="610" y1="745" x2="760" y2="678" class="arrow"/>
+
+  <!-- Cat + Reduce Level 3 -->
+  <rect x="660" y="542" width="200" height="50" class="box decoder-box"/>
+  <text x="760" y="556" class="label">Decoder Level 3</text>
+  <text x="760" y="570" class="sublabel">cat enc₃ → 1×1 → dim=4C</text>
+  <text x="760" y="584" class="sublabel">TransformerBlock × N₃</text>
+  <line x1="760" y1="622" x2="760" y2="592" class="arrow"/>
+
+  <!-- IDWT Up 3→2 -->
+  <rect x="660" y="456" width="200" height="56" class="box up-box"/>
+  <text x="760" y="472" class="label">IDWT_Upsample</text>
+  <text x="760" y="488" class="sublabel">1×1 Conv: 4C → 2C (LL)</text>
+  <text x="760" y="502" class="sublabel">cat detail₂ → IDWT → (2C, H/2, W/2)</text>
+  <line x1="760" y1="542" x2="760" y2="512" class="arrow"/>
+
+  <!-- Cat + Reduce Level 2 -->
+  <rect x="660" y="376" width="200" height="50" class="box decoder-box"/>
+  <text x="760" y="390" class="label">Decoder Level 2</text>
+  <text x="760" y="404" class="sublabel">cat enc₂ → 1×1 → dim=2C</text>
+  <text x="760" y="418" class="sublabel">TransformerBlock × N₂</text>
+  <line x1="760" y1="456" x2="760" y2="426" class="arrow"/>
+
+  <!-- IDWT Up 2→1 -->
+  <rect x="660" y="290" width="200" height="56" class="box up-box"/>
+  <text x="760" y="306" class="label">IDWT_Upsample</text>
+  <text x="760" y="322" class="sublabel">1×1 Conv: 2C → C (LL)</text>
+  <text x="760" y="336" class="sublabel">cat detail₁ → IDWT → (C, H, W)</text>
+  <line x1="760" y1="376" x2="760" y2="346" class="arrow"/>
+
+  <!-- Decoder Level 1 -->
+  <rect x="660" y="210" width="200" height="50" class="box decoder-box"/>
+  <text x="760" y="228" class="label">Decoder Level 1</text>
+  <text x="760" y="246" class="sublabel">cat enc₁ → dim=2C, TFBlock × N₁</text>
+  <line x1="760" y1="290" x2="760" y2="260" class="arrow"/>
+
+  <!-- Refinement -->
+  <rect x="660" y="140" width="200" height="44" class="box refine-box"/>
+  <text x="760" y="156" class="label">Refinement</text>
+  <text x="760" y="172" class="sublabel">TransformerBlock × N_ref  dim=2C</text>
+  <line x1="760" y1="210" x2="760" y2="184" class="arrow"/>
+
+  <!-- Output -->
+  <rect x="660" y="70" width="200" height="44" class="box io-box"/>
+  <text x="760" y="86" class="label">Output (3×3 Conv) + Residual</text>
+  <text x="760" y="102" class="sublabel">(B, 3, H, W)</text>
+  <line x1="760" y1="140" x2="760" y2="114" class="arrow"/>
+
+  <!-- ============ SKIP CONNECTIONS (feature) ============ -->
+  <!-- Enc1 → Dec1 -->
+  <path d="M 260 235 L 660 235" class="skip-arrow"/>
+  <!-- Enc2 → Dec3 (cat) -->
+  <path d="M 260 401 L 660 401" class="skip-arrow"/>
+  <!-- Enc3 → Dec3 (cat) -->
+  <path d="M 260 567 L 660 567" class="skip-arrow"/>
+
+  <!-- ============ DETAIL SKIP (DWT → IDWT) ============ -->
+  <!-- detail1: DWT1→2 → IDWT2→1 -->
+  <path d="M 260 318 Q 470 318 470 318 L 660 318" class="detail-arrow"/>
+  <text x="465" y="310" class="sublabel" fill="#f72585" font-size="10">detail₁ (3C)</text>
+
+  <!-- detail2: DWT2→3 → IDWT3→2 -->
+  <path d="M 260 484 Q 470 484 470 484 L 660 484" class="detail-arrow"/>
+  <text x="465" y="476" class="sublabel" fill="#f72585" font-size="10">detail₂ (6C)</text>
+
+  <!-- detail3: DWT3→4 → IDWT4→3 -->
+  <path d="M 260 650 Q 470 650 470 650 L 660 650" class="detail-arrow"/>
+  <text x="465" y="642" class="sublabel" fill="#f72585" font-size="10">detail₃ (12C)</text>
+
+  <!-- ============ LEGEND ============ -->
+  <rect x="30" y="830" width="860" height="80" rx="8" fill="#16213e" stroke="#334155" stroke-width="1"/>
+  <text x="460" y="850" class="label" font-size="14">Legend</text>
+
+  <!-- Legend items -->
+  <rect x="60" y="865" width="30" height="14" fill="#0f3460" stroke="#5390d9" stroke-width="1.5" rx="3"/>
+  <text x="100" y="873" class="legend-text">Encoder</text>
+
+  <rect x="170" y="865" width="30" height="14" fill="#3a0ca3" stroke="#7b2ff7" stroke-width="1.5" rx="3"/>
+  <text x="210" y="873" class="legend-text">Decoder</text>
+
+  <rect x="280" y="865" width="30" height="14" fill="#b5179e" stroke="#f72585" stroke-width="1.5" rx="3"/>
+  <text x="320" y="873" class="legend-text">DWT↓</text>
+
+  <rect x="370" y="865" width="30" height="14" fill="#f77f00" stroke="#fcbf49" stroke-width="1.5" rx="3"/>
+  <text x="410" y="873" class="legend-text">IDWT↑</text>
+
+  <line x1="480" y1="872" x2="530" y2="872" class="skip-arrow"/>
+  <text x="540" y="873" class="legend-text">Feature Skip</text>
+
+  <line x1="640" y1="872" x2="690" y2="872" class="detail-arrow"/>
+  <text x="700" y="873" class="legend-text">Detail Skip (LH,HL,HH)</text>
+</svg>
+</body>
+</html>
