@@ -248,37 +248,29 @@ class Upsample(nn.Module):
 
 
 class DWT_Downsample(nn.Module):
-    """DWT-based downsampling: fuse LL/LH/HL/HH for encoder, keep LH/HL/HH as detail skip."""
+    """DWT-based downsampling: C → 4C, spatial ÷2."""
 
     def __init__(self, n_feat, wave="haar"):
         super(DWT_Downsample, self).__init__()
         self.dwt = DWT_2D(wave)
-        self.channel_fuse = nn.Conv2d(n_feat * 4, n_feat * 2, kernel_size=1, bias=False)
 
     def forward(self, x):
-        # x: (B, C, H, W)
-        dwt_out = self.dwt(x)  # (B, 4C, H/2, W/2)
-        C = dwt_out.shape[1] // 4
-        x_detail = dwt_out[:, C:, :, :]  # (B, 3C, H/2, W/2) = [LH, HL, HH]
-        x_fused = self.channel_fuse(dwt_out)  # (B, 2C, H/2, W/2)
-        return x_fused, x_detail
+        # x: (B, C, H, W) → (B, 4C, H/2, W/2)
+        return self.dwt(x)
 
 
 class IDWT_Upsample(nn.Module):
-    """IDWT-based upsampling: combines decoder features (as LL) with encoder detail coefficients."""
+    """IDWT-based upsampling: 4C → C, spatial ×2."""
 
     def __init__(self, n_feat, wave="haar"):
         super(IDWT_Upsample, self).__init__()
+        # self.proj = nn.Conv2d(n_feat, n_feat, kernel_size=1, bias=False)
         self.idwt = IDWT_2D(wave)
-        self.channel_reduce = nn.Conv2d(n_feat, n_feat // 2, kernel_size=1, bias=False)
 
-    def forward(self, x, detail):
-        # x: (B, 2C, H/2, W/2) - decoder features
-        # detail: (B, 3C, H/2, W/2) - [LH, HL, HH] from encoder DWT
-        x_ll = self.channel_reduce(x)  # (B, C, H/2, W/2)
-        idwt_in = torch.cat([x_ll, detail], dim=1)  # (B, 4C, H/2, W/2)
-        out = self.idwt(idwt_in)  # (B, C, 2H, 2W)
-        return out
+    def forward(self, x):
+        # x: (B, 4C, H/2, W/2) → (B, C, H, W)
+        # x = self.proj(x)
+        return self.idwt(x)
 
 
 ##########################################################################
@@ -322,7 +314,7 @@ class Restormer(nn.Module):
         self.encoder_level2 = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 2**1),
+                    dim=int(dim * 4**1),
                     num_heads=heads[1],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -334,11 +326,11 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.down2_3 = DWT_Downsample(int(dim * 2**1))  ## From Level 2 to Level 3 (DWT)
+        self.down2_3 = DWT_Downsample(int(dim * 4**1))  ## From Level 2 to Level 3 (DWT)
         self.encoder_level3 = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 2**2),
+                    dim=int(dim * 4**2),
                     num_heads=heads[2],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -350,11 +342,11 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.down3_4 = DWT_Downsample(int(dim * 2**2))  ## From Level 3 to Level 4 (DWT)
+        self.down3_4 = DWT_Downsample(int(dim * 4**2))  ## From Level 3 to Level 4 (DWT)
         self.latent = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 2**3),
+                    dim=int(dim * 4**3),
                     num_heads=heads[3],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -366,14 +358,11 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up4_3 = IDWT_Upsample(int(dim * 2**3))  ## From Level 4 to Level 3 (IDWT)
-        self.reduce_chan_level3 = nn.Conv2d(
-            int(dim * 2**3), int(dim * 2**2), kernel_size=1, bias=bias
-        )
+        self.up4_3 = IDWT_Upsample(int(dim * 4**3))  ## From Level 4 to Level 3 (IDWT)
         self.decoder_level3 = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 2**2),
+                    dim=int(dim * 4**2),
                     num_heads=heads[2],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -385,14 +374,11 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up3_2 = IDWT_Upsample(int(dim * 2**2))  ## From Level 3 to Level 2 (IDWT)
-        self.reduce_chan_level2 = nn.Conv2d(
-            int(dim * 2**2), int(dim * 2**1), kernel_size=1, bias=bias
-        )
+        self.up3_2 = IDWT_Upsample(int(dim * 4**2))  ## From Level 3 to Level 2 (IDWT)
         self.decoder_level2 = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 2**1),
+                    dim=int(dim * 4**1),
                     num_heads=heads[1],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -404,12 +390,12 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up2_1 = IDWT_Upsample(int(dim * 2**1))  ## From Level 2 to Level 1 (IDWT)
+        self.up2_1 = IDWT_Upsample(int(dim * 4**1))  ## From Level 2 to Level 1 (IDWT)
 
         self.decoder_level1 = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 2**1),
+                    dim=dim,
                     num_heads=heads[0],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -424,7 +410,7 @@ class Restormer(nn.Module):
         self.refinement = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 2**1),
+                    dim=dim,
                     num_heads=heads[0],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -439,38 +425,33 @@ class Restormer(nn.Module):
         #### For Dual-Pixel Defocus Deblurring Task ####
         self.dual_pixel_task = dual_pixel_task
         if self.dual_pixel_task:
-            self.skip_conv = nn.Conv2d(dim, int(dim * 2**1), kernel_size=1, bias=bias)
+            self.skip_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
         ###########################
 
         self.output = nn.Conv2d(
-            int(dim * 2**1), out_channels, kernel_size=3, stride=1, padding=1, bias=bias
+            dim, out_channels, kernel_size=3, stride=1, padding=1, bias=bias
         )
 
     def forward(self, inp_img):
         inp_enc_level1 = self.patch_embed(inp_img)
         out_enc_level1 = self.encoder_level1(inp_enc_level1)
 
-        inp_enc_level2, detail1 = self.down1_2(out_enc_level1)
+        inp_enc_level2 = self.down1_2(out_enc_level1)
         out_enc_level2 = self.encoder_level2(inp_enc_level2)
 
-        inp_enc_level3, detail2 = self.down2_3(out_enc_level2)
+        inp_enc_level3 = self.down2_3(out_enc_level2)
         out_enc_level3 = self.encoder_level3(inp_enc_level3)
 
-        inp_enc_level4, detail3 = self.down3_4(out_enc_level3)
+        inp_enc_level4 = self.down3_4(out_enc_level3)
         latent = self.latent(inp_enc_level4)
 
-        inp_dec_level3 = self.up4_3(latent, detail3)
-        inp_dec_level3 = torch.cat([inp_dec_level3, out_enc_level3], 1)
-        inp_dec_level3 = self.reduce_chan_level3(inp_dec_level3)
+        inp_dec_level3 = self.up4_3(latent)
         out_dec_level3 = self.decoder_level3(inp_dec_level3)
 
-        inp_dec_level2 = self.up3_2(out_dec_level3, detail2)
-        inp_dec_level2 = torch.cat([inp_dec_level2, out_enc_level2], 1)
-        inp_dec_level2 = self.reduce_chan_level2(inp_dec_level2)
+        inp_dec_level2 = self.up3_2(out_dec_level3)
         out_dec_level2 = self.decoder_level2(inp_dec_level2)
 
-        inp_dec_level1 = self.up2_1(out_dec_level2, detail1)
-        inp_dec_level1 = torch.cat([inp_dec_level1, out_enc_level1], 1)
+        inp_dec_level1 = self.up2_1(out_dec_level2)
         out_dec_level1 = self.decoder_level1(inp_dec_level1)
 
         out_dec_level1 = self.refinement(out_dec_level1)
