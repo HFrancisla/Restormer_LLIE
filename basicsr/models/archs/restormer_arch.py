@@ -248,29 +248,31 @@ class Upsample(nn.Module):
 
 
 class DWT_Downsample(nn.Module):
-    """DWT-based downsampling: C → 4C, spatial ÷2."""
+    """DWT-based downsampling with channel projection: C → 2C, spatial ÷2."""
 
     def __init__(self, n_feat, wave="haar"):
         super(DWT_Downsample, self).__init__()
         self.dwt = DWT_2D(wave)
+        # DWT produces 4C channels; reduce to 2C to keep memory manageable
+        self.proj = nn.Conv2d(n_feat * 4, n_feat * 2, kernel_size=1, bias=False)
 
     def forward(self, x):
-        # x: (B, C, H, W) → (B, 4C, H/2, W/2)
-        return self.dwt(x)
+        # x: (B, C, H, W) → DWT → (B, 4C, H/2, W/2) → proj → (B, 2C, H/2, W/2)
+        return self.proj(self.dwt(x))
 
 
 class IDWT_Upsample(nn.Module):
-    """IDWT-based upsampling: 4C → C, spatial ×2."""
+    """IDWT-based upsampling with channel projection: 2C → C, spatial ×2."""
 
     def __init__(self, n_feat, wave="haar"):
         super(IDWT_Upsample, self).__init__()
-        # self.proj = nn.Conv2d(n_feat, n_feat, kernel_size=1, bias=False)
+        # Expand n_feat → 2*n_feat so IDWT (which divides channels by 4) outputs n_feat/2
+        self.proj = nn.Conv2d(n_feat, n_feat * 2, kernel_size=1, bias=False)
         self.idwt = IDWT_2D(wave)
 
     def forward(self, x):
-        # x: (B, 4C, H/2, W/2) → (B, C, H, W)
-        # x = self.proj(x)
-        return self.idwt(x)
+        # x: (B, C, H/2, W/2) → proj → (B, 2C, H/2, W/2) → IDWT → (B, C/2, H, W)
+        return self.idwt(self.proj(x))
 
 
 ##########################################################################
@@ -314,7 +316,7 @@ class Restormer(nn.Module):
         self.encoder_level2 = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 4**1),
+                    dim=int(dim * 2**1),
                     num_heads=heads[1],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -326,11 +328,11 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.down2_3 = DWT_Downsample(int(dim * 4**1))  ## From Level 2 to Level 3 (DWT)
+        self.down2_3 = DWT_Downsample(int(dim * 2**1))  ## From Level 2 to Level 3 (DWT)
         self.encoder_level3 = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 4**2),
+                    dim=int(dim * 2**2),
                     num_heads=heads[2],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -342,11 +344,11 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.down3_4 = DWT_Downsample(int(dim * 4**2))  ## From Level 3 to Level 4 (DWT)
+        self.down3_4 = DWT_Downsample(int(dim * 2**2))  ## From Level 3 to Level 4 (DWT)
         self.latent = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 4**3),
+                    dim=int(dim * 2**3),
                     num_heads=heads[3],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -358,11 +360,11 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up4_3 = IDWT_Upsample(int(dim * 4**3))  ## From Level 4 to Level 3 (IDWT)
+        self.up4_3 = IDWT_Upsample(int(dim * 2**3))  ## From Level 4 to Level 3 (IDWT)
         self.decoder_level3 = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 4**2),
+                    dim=int(dim * 2**2),
                     num_heads=heads[2],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -374,11 +376,11 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up3_2 = IDWT_Upsample(int(dim * 4**2))  ## From Level 3 to Level 2 (IDWT)
+        self.up3_2 = IDWT_Upsample(int(dim * 2**2))  ## From Level 3 to Level 2 (IDWT)
         self.decoder_level2 = nn.Sequential(
             *[
                 TransformerBlock(
-                    dim=int(dim * 4**1),
+                    dim=int(dim * 2**1),
                     num_heads=heads[1],
                     ffn_expansion_factor=ffn_expansion_factor,
                     bias=bias,
@@ -390,7 +392,7 @@ class Restormer(nn.Module):
             ]
         )
 
-        self.up2_1 = IDWT_Upsample(int(dim * 4**1))  ## From Level 2 to Level 1 (IDWT)
+        self.up2_1 = IDWT_Upsample(int(dim * 2**1))  ## From Level 2 to Level 1 (IDWT)
 
         self.decoder_level1 = nn.Sequential(
             *[
