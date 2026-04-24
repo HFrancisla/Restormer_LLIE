@@ -1,5 +1,22 @@
-# 可视化三种注意力机制的第一层 Encoder Block 0
-# 包括: Patch Embedding, Block Input, Q, K, V, Attention Map, Attention*V
+<#
+.SYNOPSIS
+    批量可视化 Encoder Level 1 Block 0 的完整数据流
+
+.DESCRIPTION
+    对多张图像 × MDTA/HTA/WTA 三种注意力机制，批量调用 visualize_first_block.py，
+    生成 Patch Embedding → Q/K/V → Attention Map → Output 的完整可视化。
+    在脚本内通过 $IMAGES 和 $CHECKPOINTS 配置图像和权重。
+
+.EXAMPLE
+    # 在项目根目录运行
+    .\scripts\visualization\visualize_first_block_all.ps1
+
+.NOTES
+    运行前需确认:
+    - $CHECKPOINTS 中的权重文件路径存在
+    - $IMAGES 中的图像文件位于项目根目录
+    - 输出目录: visualization\first_block\
+#>
 
 $IMAGES = @(
     "low00729.png",
@@ -7,7 +24,7 @@ $IMAGES = @(
     "low00736.png"
 )
 $EXPERIMENTS_DIR = "experiments"
-$OUTPUT_DIR = "visualization_first_block_jet"
+$OUTPUT_DIR = "visualization\first_block"
 
 # 三种注意力机制的 checkpoint 路径
 $CHECKPOINTS = @{
@@ -41,7 +58,7 @@ foreach ($IMAGE in $IMAGES) {
         }
         
         # 运行可视化
-        python scripts/visualize_first_block_JET.py `
+        python scripts/visualization/visualize_first_block.py `
             --image $IMAGE `
             --checkpoint $checkpoint `
             --attn_type $attn_type `

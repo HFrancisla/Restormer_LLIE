@@ -1,6 +1,26 @@
 """
-根据CSV文件中的Filename列过滤文件夹中的文件
-保留匹配的文件，删除不匹配的文件
+根据 CSV 过滤文件夹中的文件
+========================================
+功能:
+    读取 CSV 中的 Filename 列，保留文件夹中匹配的文件，删除不匹配的文件。
+    默认预览模式 (dry-run)，加 --execute 才实际删除。
+
+使用方法:
+    # 预览（不实际删除）
+    python scripts/pick/filter_files_by_csv.py ^
+        --csv metrics_comparison_PSNR.csv ^
+        --folders folder1 folder2
+
+    # 递归处理子目录并实际删除
+    python scripts/pick/filter_files_by_csv.py ^
+        --csv metrics_comparison_PSNR.csv ^
+        --folders folder1 folder2 --recursive --execute
+
+参数:
+    --csv        必选，包含 Filename 列的 CSV 文件
+    --folders    必选，要处理的文件夹 (可多个)
+    --recursive  递归处理子目录
+    --execute    实际执行删除 (缺省为预览模式)
 """
 
 import os

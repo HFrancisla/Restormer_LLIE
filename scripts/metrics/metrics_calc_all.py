@@ -1,32 +1,27 @@
 """
-一键计算全部图像质量评价指标的脚本
-=========================================================
-该脚本用于一键计算所有的 6 种图像质量评价指标：
-- 全参考指标 (Full-Reference)：PSNR, SSIM, LPIPS （将增强后的图像与参考图像对比）
-- 无参考指标 (No-Reference)：NIQE, MUSIQ, BRISQUE （仅评估增强后图像自身的质量）
+一键计算全部图像质量评价指标 (单目录)
+========================================
+功能:
+    计算 6 种图像质量评价指标:
+    - 全参考 (FR): PSNR↑, SSIM↑, LPIPS↓  — 需要与 GT 对比
+    - 无参考 (NR): NIQE↓, MUSIQ↑, BRISQUE↓ — 仅评估增强图像
 
-使用要求及环境配置：
-1. 请确保已安装以下必要依赖：
-   pip install opencv-python numpy torch torchvision natsort tqdm scikit-image lpips
-   pip install pyiqa brisque
-2. 初次运行计算无参考指标时，会自动从 Hugging Face 下载模型权重。脚本已配置镜像加速。
+使用方法:
+    python scripts/metrics/metrics_calc_all.py ^
+        --dirA ./datasets/LOL-v2/Real_captured/Test/Normal ^
+        --dirB ./results/Experiment_A/net_g_44000 ^
+        --type png --use_gpu ^
+        --save_txt metrics_results_all.txt
 
-使用示例：
----------------------------------------------------------
-python metrics_calc_all.py \
-    --dirA "路径/到/参考图像/目录/1" \
-    --dirB "路径/到/增强图像/目录/2" \
-    --type "png" \
-    --use_gpu \
-    --save_txt "metrics_results_all.txt"
+参数:
+    --dirA      必选，参考图像 (GT) 目录
+    --dirB      必选，增强图像 (模型输出) 目录
+    --type      图像扩展名，默认 png
+    --use_gpu   使用 GPU 加速 (推荐，MUSIQ/LPIPS 较慢)
+    --save_txt  结果保存路径，默认 metrics_results_all.txt
 
-参数说明：
---dirA     : 全参考指标的参考(Reference)图像目录 (如 GT)
---dirB     : 需要被评估的增强后(Enhanced)图像目录 (如模型输出)
---type     : 被评估图像的扩展名，默认为 "png"
---use_gpu  : 是否使用 GPU 进行推理加速 (强烈推荐，MUSIQ 等模型开销较大)
---save_txt : 将评估结果保存为 txt 文本文件的路径
----------------------------------------------------------
+依赖:
+    pip install opencv-python numpy torch torchvision natsort tqdm scikit-image lpips pyiqa brisque
 """
 
 import argparse

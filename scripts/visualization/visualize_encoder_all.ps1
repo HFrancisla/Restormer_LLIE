@@ -1,13 +1,30 @@
-# Restormer Encoder 层全量可视化脚本
-# 对 HTA, WTA, MDTA 三种注意力机制的 encoder1-3 和 latent 层进行可视化
+<#
+.SYNOPSIS
+    Restormer Encoder 全量可视化批处理脚本
+
+.DESCRIPTION
+    对 MDTA/HTA/WTA 三种注意力机制的 Encoder Level 1-4 (含 Latent) 所有 Block
+    批量调用 visualize_attention.py 生成可视化图。
+    在脚本内通过 $LEVEL_CONFIG 控制要可视化的层级和 Block 数量。
+
+.EXAMPLE
+    # 在项目根目录运行
+    .\scripts\visualization\visualize_encoder_all.ps1
+
+.NOTES
+    运行前需确认:
+    - $MODELS 中的权重文件路径存在
+    - $NORMAL_IMAGE / $LOW_IMAGE 图像文件存在
+    - 输出目录: visualization\encoder\
+#>
 
 $ErrorActionPreference = "Stop"
 
 # 配置路径
 $PROJECT_ROOT = "D:\Workspace\A_Projects\Thesis\LLIE\Restormer_LLIE"
 $EXPERIMENTS_DIR = "$PROJECT_ROOT\experiments"
-$OUTPUT_DIR = "$PROJECT_ROOT\visualization_encoder"
-$SCRIPT_PATH = "$PROJECT_ROOT\scripts\visualize_attention.py"
+$OUTPUT_DIR = "$PROJECT_ROOT\visualization\encoder"
+$SCRIPT_PATH = "$PROJECT_ROOT\scripts\visualization\visualize_attention.py"
 
 # 图像路径
 $NORMAL_IMAGE = "$PROJECT_ROOT\normal00323.png"

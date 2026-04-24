@@ -1,30 +1,25 @@
-
 """
-批量计算图像质量指标脚本
-=========================================================
-该脚本用于自动遍历指定结果目录下的所有子文件夹，并调用 metrics_calc_all.py 
-计算 6 种指标（PSNR, SSIM, LPIPS, NIQE, MUSIQ, BRISQUE）。
+批量计算图像质量指标
+========================================
+功能:
+    自动遍历结果目录下的所有子文件夹，调用 metrics_calc_all.py 计算 6 种指标
+    （PSNR, SSIM, LPIPS, NIQE, MUSIQ, BRISQUE），每个子文件夹生成独立的结果文件。
 
-主要功能：
-1. 自动识别结果根目录下的所有子文件夹（如不同 epoch 的测试结果）。
-2. 将每个子文件夹的评价结果保存为单独的 .txt 文件。
-3. 自动匹配 GT 图像与增强图像。
-4. 结果统一存放在 results\metrics\{实验名} 目录下。
+使用方法:
+    python scripts/metrics/batch_eval_metrics.py ^
+        --results_dir ./results/Experiment_A ^
+        --gt_dir ./datasets/LOL-v2/Real_captured/Test/Normal ^
+        --use_gpu
 
-使用示例：
----------------------------------------------------------
-python scripts/metrics/batch_eval_metrics.py \
-    --results_dir "./results/Experiment_A" \
-    --gt_dir "./datasets/LOL-v2/Test/Normal" \
-    --use_gpu
+参数:
+    --results_dir  必选，包含多个结果子文件夹的根目录
+    --gt_dir       必选，参考图像 (GT) 目录
+    --img_ext      图像扩展名，默认 png
+    --use_gpu      使用 GPU 加速 (推荐)
+    --output_root  指标结果存放根目录，默认 results/metrics
 
-参数说明：
---results_dir : 包含多个结果子文件夹的根目录（如 ./results/Exp1）
---gt_dir      : 参考图像（地面真值）目录
---img_ext     : 图像扩展名，默认为 "png"
---use_gpu     : 是否使用 GPU 计算 LPIPS 和 MUSIQ（推荐开启）
---output_root : 指标结果存放根目录，默认为 results/metrics
----------------------------------------------------------
+输出:
+    results/metrics/{实验名}/{子文件夹名}.txt
 """
 
 import os

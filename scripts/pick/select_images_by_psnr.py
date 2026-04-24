@@ -1,8 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-用于挑选符合整体指标排名的示例图片
-PSNR越高越好
+按 PSNR 排名一致性挑选代表性图片
+========================================
+功能:
+    读取 compare_folders_metrics.py 生成的 PSNR CSV，基于各模型的平均 PSNR 排名，
+    筛选出单张图片 PSNR 排序与整体排名一致的代表性样本（用于论文展示）。
+
+使用方法:
+    直接修改 main() 中的 csv_path 后运行:
+    python scripts/pick/select_images_by_psnr.py
+
+输出:
+    - {stem}_selected_strict.csv   严格符合排名的图片
+    - {stem}_selected_partial.csv  部分符合排名的图片 (得分>=0.8)
+    - {stem}_selected_all_scores.csv  所有图片及其一致性得分
+    - {stem}_selected_report.txt   详细分析报告
+
+说明:
+    - 一致性得分 1.0 表示完全符合整体排名顺序
+    - 如果严格符合的图片不足 10 张，自动补充得分第二高的图片
 """
 
 import pandas as pd

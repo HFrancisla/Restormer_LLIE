@@ -1,6 +1,25 @@
 """
-比较多个文件夹下同名文件的PSNR和SSIM指标
-结果保存为CSV格式，行是文件名，列是不同的文件夹名
+跨文件夹 PSNR/SSIM 对比
+========================================
+功能:
+    比较一个父目录下多个子文件夹中同名图像相对于 GT 的 PSNR 和 SSIM。
+    结果保存为两个 CSV 文件 ({prefix}_PSNR.csv, {prefix}_SSIM.csv)，
+    行是文件名，列是不同子文件夹 (模型/实验)。
+
+使用方法:
+    python scripts/pick/compare_folders_metrics.py ^
+        --parent_dir ./results/Experiment_A ^
+        --gt_path D:/Datasets/LOL-v2/Real_captured/Test/Normal ^
+        --type png
+
+参数:
+    --parent_dir  必选，包含多个结果子文件夹的父目录
+    --gt_path     GT 目录 (绝对路径=外部GT; 文件夹名=父目录内子文件夹; 缺省=第一个子文件夹)
+    --type        图像扩展名，默认 png
+    --save_csv    CSV 保存路径，默认 {parent_dir}/metrics_comparison.csv
+
+输出:
+    {save_csv}_PSNR.csv, {save_csv}_SSIM.csv
 """
 
 import glob

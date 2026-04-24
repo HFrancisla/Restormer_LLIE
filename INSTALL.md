@@ -24,7 +24,7 @@ conda install pytorch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 pytorch-cuda=
 
 # Next
 
-pip install matplotlib scikit-learn scikit-image "opencv-python<4.10.0" yacs joblib natsort h5py tqdm
+pip install matplotlib scikit-learn scikit-image "opencv-python<4.10.0" yacs joblib natsort h5py tqdm wandb
 
 pip install einops gdown addict future lmdb "numpy<2" pyyaml requests scipy tb-nightly yapf lpips
 
