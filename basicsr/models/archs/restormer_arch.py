@@ -194,6 +194,14 @@ class DWT_PureAttn(nn.Module):
         k = self.k_dwconv(self.k_conv(x))
         v = self.v_dwconv(self.v_conv(x))
 
+        # Pad to even dimensions for DWT (reflect-pad avoids border artifacts)
+        pad_h = h % 2
+        pad_w = w % 2
+        if pad_h or pad_w:
+            q = F.pad(q, (0, pad_w, 0, pad_h), mode="reflect")
+            k = F.pad(k, (0, pad_w, 0, pad_h), mode="reflect")
+            v = F.pad(v, (0, pad_w, 0, pad_h), mode="reflect")
+
         # DWT decomposition: (b, c, h, w) → (b, 4c, h/2, w/2)
         q_dwt = self.dwt(q)
         k_dwt = self.dwt(k)
@@ -204,7 +212,7 @@ class DWT_PureAttn(nn.Module):
         k_subs = k_dwt.chunk(4, dim=1)
         v_subs = v_dwt.chunk(4, dim=1)
 
-        h2, w2 = h // 2, w // 2
+        h2, w2 = (h + pad_h) // 2, (w + pad_w) // 2
         attended_subs = []
 
         for q_s, k_s, v_s in zip(q_subs, k_subs, v_subs):
@@ -246,6 +254,10 @@ class DWT_PureAttn(nn.Module):
 
         # IDWT reconstruction: (b, 4c, h/2, w/2) → (b, c, h, w)
         out = self.idwt(out_dwt)
+
+        # Crop back to original size if padded
+        if pad_h or pad_w:
+            out = out[:, :, :h, :w]
 
         # Output 1×1 projection
         out = self.project_out(out)
@@ -300,16 +312,26 @@ class DWT_ParallelAttn(nn.Module):
         k = self.k_dwconv(self.k_conv(x))
         v = self.v_dwconv(self.v_conv(x))
 
+        # Pad to even dimensions for DWT (reflect-pad avoids border artifacts)
+        pad_h = h % 2
+        pad_w = w % 2
+        if pad_h or pad_w:
+            q_padded = F.pad(q, (0, pad_w, 0, pad_h), mode="reflect")
+            k_padded = F.pad(k, (0, pad_w, 0, pad_h), mode="reflect")
+            v_padded = F.pad(v, (0, pad_w, 0, pad_h), mode="reflect")
+        else:
+            q_padded, k_padded, v_padded = q, k, v
+
         # ============ DWT Branch (same as DWT_PureAttn) ============
-        q_dwt = self.dwt(q)
-        k_dwt = self.dwt(k)
-        v_dwt = self.dwt(v)
+        q_dwt = self.dwt(q_padded)
+        k_dwt = self.dwt(k_padded)
+        v_dwt = self.dwt(v_padded)
 
         q_subs = q_dwt.chunk(4, dim=1)
         k_subs = k_dwt.chunk(4, dim=1)
         v_subs = v_dwt.chunk(4, dim=1)
 
-        h2, w2 = h // 2, w // 2
+        h2, w2 = (h + pad_h) // 2, (w + pad_w) // 2
         attended_subs = []
 
         for q_s, k_s, v_s in zip(q_subs, k_subs, v_subs):
@@ -342,6 +364,11 @@ class DWT_ParallelAttn(nn.Module):
 
         out_dwt = torch.cat(attended_subs, dim=1)
         dwt_out = self.idwt(out_dwt)
+
+        # Crop back to original size if padded
+        if pad_h or pad_w:
+            dwt_out = dwt_out[:, :, :h, :w]
+
         dwt_out = self.dwt_project_out(dwt_out)  # DWT branch 1×1 conv
 
         # ============ Spatial Branch (MDTA-style C×C attention) ============
